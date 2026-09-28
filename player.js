@@ -233,7 +233,7 @@ function tick() {
       setTimeout(() => refresh().catch(() => {}), 200 + Math.random() * 900);
     }
   }
-  if (s.mode === 'self' && selfPhase === 'question' && selfQ && !selfQ.sent) {
+  if (s.mode === 'self' && s.timed !== false && selfPhase === 'question' && selfQ && !selfQ.sent) {
     const end = selfQ.start + selfQ.question.time_limit * 1000;
     const left = end - now();
     updateTimer(left, selfQ.question.time_limit);
@@ -258,10 +258,13 @@ function header(pos, total, category, extra = '') {
 }
 
 function scoringTips() {
+  const timed = state.session.timed !== false;
   return `<div class="card" style="margin-top:16px">
     <h3>Dicas para pontuar</h3>
     <ul class="small muted" style="margin:0;padding-left:18px">
-      <li>Responda rápido: até <b style="color:var(--text)">1.000 pontos</b> por acerto.</li>
+      ${timed
+        ? '<li>Responda rápido: até <b style="color:var(--text)">1.000 pontos</b> por acerto.</li>'
+        : '<li>Sem cronômetro: cada acerto vale <b style="color:var(--text)">1.000 pontos</b>. Em caso de empate, vence quem respondeu mais rápido.</li>'}
       <li>Acertos seguidos rendem <b style="color:var(--text)">bônus de até +500</b>.</li>
       <li>Leia com atenção: errar zera a sequência.</li>
     </ul>
@@ -506,17 +509,18 @@ async function selfNext() {
 
 function buildSelfQuestion() {
   const q = selfQ.question;
+  const timed = state.session.timed !== false;
   const order = optionOrder(q.options.length, me.player_id + ':' + q.idx, state.session.shuffle_options);
   game().innerHTML = `
     ${header(selfQ.position + 1, selfQ.total, q.category)}
-    <div class="row" style="gap:10px;flex-wrap:nowrap">
+    ${timed ? `<div class="row" style="gap:10px;flex-wrap:nowrap">
       <div class="timerbar grow" id="timer-bar"><i></i></div>
       <span class="timer-num" id="timer-num"></span>
-    </div>
+    </div>` : '<p class="small muted" style="margin:0 0 12px">⏳ Sem limite de tempo: leia com calma.</p>'}
     <p class="qtext">${esc(q.text)}</p>
     ${optionsHtml(q, order)}
     <p class="center small muted" style="margin-top:14px">Pontuação: <b style="color:var(--text)">${fmt(selfQ.score)}</b>${selfQ.streak >= 2 ? ` · 🔥 ${selfQ.streak} seguidas` : ''}</p>`;
-  updateTimer(selfQ.start + q.time_limit * 1000 - now(), q.time_limit);
+  if (timed) updateTimer(selfQ.start + q.time_limit * 1000 - now(), q.time_limit);
   $$('.opt', game()).forEach(btn => btn.addEventListener('click', () => selfSubmit(Number(btn.dataset.i), btn)));
 }
 

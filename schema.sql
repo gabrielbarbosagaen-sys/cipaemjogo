@@ -75,6 +75,8 @@ create table if not exists public.sessions (
 );
 create unique index if not exists sessions_active_pin
   on public.sessions (pin) where status not in ('finished', 'closed');
+-- cronômetro por pergunta (no modo "no seu ritmo" pode ser desligado)
+alter table public.sessions add column if not exists timed boolean not null default true;
 
 -- Cópia das perguntas no momento do jogo (o histórico não muda se as perguntas forem editadas depois)
 create table if not exists public.session_questions (
@@ -214,21 +216,24 @@ end $$;
 
 -- Pontuação: até 1000 pontos por acerto, caindo até 500 conforme o tempo passa,
 -- + 100 pontos por acerto seguido (a partir do 2º), no máximo +500.
+-- Sem cronômetro (p_timed = false): 1000 pontos fixos por acerto + bônus; o tempo só desempata.
+drop function if exists private.score_answer(public.players, int, int, int, public.session_questions);
 create or replace function private.score_answer(
-  p public.players, p_idx int, p_choice int, p_elapsed int, q public.session_questions)
+  p public.players, p_idx int, p_choice int, p_elapsed int, q public.session_questions, p_timed boolean default true)
 returns public.answers language plpgsql set search_path = public as $$
 declare
-  v_limit_ms int := q.time_limit * 1000;
+  v_limit_ms int := case when p_timed then q.time_limit * 1000 else 600000 end;
   v_correct boolean;
   v_streak int;
   v_base int := 0;
   v_bonus int := 0;
   a public.answers;
 begin
-  v_correct := p_choice is not null and p_choice = q.correct_index and p_elapsed <= v_limit_ms + 1500;
+  v_correct := p_choice is not null and p_choice = q.correct_index
+               and (not p_timed or p_elapsed <= v_limit_ms + 1500);
   if v_correct then
     v_streak := p.streak + 1;
-    v_base   := round(1000 - 500.0 * least(p_elapsed, v_limit_ms) / v_limit_ms);
+    v_base   := case when p_timed then round(1000 - 500.0 * least(p_elapsed, v_limit_ms) / v_limit_ms) else 1000 end;
     v_bonus  := least((v_streak - 1) * 100, 500);
   else
     v_streak := 0;
@@ -358,7 +363,7 @@ returns jsonb language sql stable as $$
     'id', s.id, 'pin', s.pin, 'name', s.name, 'mode', s.mode, 'status', s.status,
     'quiz_title', s.quiz_title, 'current_index', s.current_index,
     'question_started_at', s.question_started_at, 'paused_at', s.paused_at,
-    'show_explanation', s.show_explanation, 'shuffle_options', s.shuffle_options,
+    'show_explanation', s.show_explanation, 'shuffle_options', s.shuffle_options, 'timed', s.timed,
     'shuffle_questions', s.shuffle_questions, 'created_at', s.created_at,
     'started_at', s.started_at, 'finished_at', s.finished_at)
 $$;
@@ -557,9 +562,9 @@ begin
     select * into q from public.session_questions where session_id = s.id and idx = me.q_order[me.self_pos + 1];
     if me.q_started_at is null then
       update public.players set q_started_at = clock_timestamp() where id = me.id returning * into me;
-    elsif clock_timestamp() > me.q_started_at + make_interval(secs => (q.time_limit + 1.5)::float8) then
+    elsif s.timed and clock_timestamp() > me.q_started_at + make_interval(secs => (q.time_limit + 1.5)::float8) then
       -- tempo esgotado (ex.: fechou o navegador): conta como sem resposta e segue
-      perform private.score_answer(me, q.idx, null, q.time_limit * 1000, q);
+      perform private.score_answer(me, q.idx, null, q.time_limit * 1000, q, true);
       update public.players set self_pos = self_pos + 1, q_started_at = null where id = me.id returning * into me;
       continue;
     end if;
@@ -593,7 +598,7 @@ begin
   end if;
 
   v_elapsed := floor(extract(epoch from (clock_timestamp() - me.q_started_at)) * 1000)::int;
-  a := private.score_answer(me, p_index, p_choice, v_elapsed, q);
+  a := private.score_answer(me, p_index, p_choice, v_elapsed, q, s.timed);
 
   update public.players set
     self_pos     = self_pos + 1,
@@ -603,7 +608,7 @@ begin
 
   return jsonb_build_object(
     'is_correct', a.is_correct, 'chosen', a.chosen,
-    'timeout', a.chosen is null or v_elapsed > q.time_limit * 1000 + 1500,
+    'timeout', a.chosen is null or (s.timed and v_elapsed > q.time_limit * 1000 + 1500),
     'correct_index', q.correct_index,
     'explanation', case when s.show_explanation then q.explanation end,
     'points', a.points, 'bonus', a.bonus, 'elapsed_ms', a.elapsed_ms,
@@ -781,9 +786,11 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+drop function if exists public.admin_create_session(text, text, uuid, text, boolean, boolean, boolean);
 create or replace function public.admin_create_session(
   p_pass text, p_name text, p_quiz uuid, p_mode text,
-  p_shuffle_questions boolean, p_shuffle_options boolean, p_show_explanation boolean)
+  p_shuffle_questions boolean, p_shuffle_options boolean, p_show_explanation boolean,
+  p_timed boolean default true)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_pin text; v_id uuid; v_title text; v_count int;
 begin
@@ -800,10 +807,11 @@ begin
       select 1 from public.sessions where pin = v_pin and status not in ('finished', 'closed'));
   end loop;
 
-  insert into public.sessions (pin, name, quiz_id, quiz_title, mode, shuffle_questions, shuffle_options, show_explanation)
+  insert into public.sessions (pin, name, quiz_id, quiz_title, mode, shuffle_questions, shuffle_options, show_explanation, timed)
   values (v_pin, coalesce(nullif(btrim(p_name), ''), 'Encontro CIPA'), p_quiz, v_title, p_mode,
           coalesce(p_shuffle_questions, false) and p_mode = 'self',
-          coalesce(p_shuffle_options, false), coalesce(p_show_explanation, true))
+          coalesce(p_shuffle_options, false), coalesce(p_show_explanation, true),
+          p_mode = 'live' or coalesce(p_timed, true))
   returning id into v_id;
   perform private.snapshot(v_id);
   return jsonb_build_object('id', v_id, 'pin', v_pin);

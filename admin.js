@@ -105,7 +105,8 @@ async function loadSessions() {
             <label><input type="radio" name="mode" value="live" checked><span class="opt-card"><b>🎤 Ao vivo</b><small>Você controla as perguntas pelo telão; todos respondem ao mesmo tempo.</small></span></label>
             <label><input type="radio" name="mode" value="self"><span class="opt-card"><b>🏃 No seu ritmo</b><small>Cada participante responde sozinho enquanto a sala estiver aberta.</small></span></label>
           </div>
-          <label class="check" id="chk-shuffle-q-wrap"><input type="checkbox" id="n-shuffle-q"><span>Embaralhar a ordem das perguntas<small>Disponível apenas no modo "no seu ritmo".</small></span></label>
+          <label class="check self-only"><input type="checkbox" id="n-timed" checked><span>Usar cronômetro em cada pergunta<small>Desmarcado: sem limite de tempo; cada acerto vale 1.000 pontos + bônus de sequência, e o tempo só desempata. (No modo ao vivo o cronômetro é sempre usado.)</small></span></label>
+          <label class="check self-only"><input type="checkbox" id="n-shuffle-q"><span>Embaralhar a ordem das perguntas<small>Disponível apenas no modo "no seu ritmo".</small></span></label>
           <label class="check"><input type="checkbox" id="n-shuffle-o"><span>Embaralhar as alternativas em cada celular<small>Dificulta copiar a resposta do colega.</small></span></label>
           <label class="check"><input type="checkbox" id="n-expl" checked><span>Mostrar a explicação após cada resposta<small>Reforça o aprendizado.</small></span></label>
           <button class="btn btn-primary btn-lg btn-block" type="submit" id="btn-create">Criar sessão</button>
@@ -130,8 +131,9 @@ async function loadSessions() {
   const syncShuffle = () => {
     const self = $('input[name=mode]:checked').value === 'self';
     $('#n-shuffle-q').disabled = !self;
-    if (!self) $('#n-shuffle-q').checked = false;
-    $('#chk-shuffle-q-wrap').style.opacity = self ? 1 : .5;
+    $('#n-timed').disabled = !self;
+    if (!self) { $('#n-shuffle-q').checked = false; $('#n-timed').checked = true; }
+    $$('.self-only').forEach(el => { el.style.opacity = self ? 1 : .5; });
   };
   $$('input[name=mode]').forEach(r => r.addEventListener('change', syncShuffle));
   syncShuffle();
@@ -144,7 +146,8 @@ async function loadSessions() {
         p_mode: $('input[name=mode]:checked').value,
         p_shuffle_questions: $('#n-shuffle-q').checked,
         p_shuffle_options: $('#n-shuffle-o').checked,
-        p_show_explanation: $('#n-expl').checked
+        p_show_explanation: $('#n-expl').checked,
+        p_timed: $('#n-timed').checked
       });
       toast(`Sessão criada! PIN ${r.pin}`, 'success');
       location.hash = '#sessao/' + r.id;
@@ -253,7 +256,7 @@ function renderControl() {
         <div>
           <h2 style="margin-bottom:4px">${esc(s.name)}</h2>
           <p class="muted" style="margin:0 0 10px">${esc(s.quiz_title || '')} · ${total} perguntas · ${modeLabel(s.mode)}
-            ${s.shuffle_options ? ' · alternativas embaralhadas' : ''}${s.shuffle_questions ? ' · perguntas embaralhadas' : ''}</p>
+            ${s.timed === false ? ' · sem cronômetro' : ''}${s.shuffle_options ? ' · alternativas embaralhadas' : ''}${s.shuffle_questions ? ' · perguntas embaralhadas' : ''}</p>
           ${statusChip(s.status)}
         </div>
         <div class="center">

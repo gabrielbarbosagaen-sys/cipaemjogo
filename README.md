@@ -87,7 +87,9 @@ git remote add origin https://github.com/SEU-USUARIO/cipa-em-jogo.git && git pus
 
 **Modo 🏃 No seu ritmo**
 1. Crie a sessão no modo **No seu ritmo** e compartilhe o link/PIN (ex.: no grupo de WhatsApp da loja).
-2. Clique em **▶ Abrir sala**. Cada pessoa responde sozinha, com o cronômetro de cada pergunta.
+2. Clique em **▶ Abrir sala**. Cada pessoa responde sozinha.
+   - Com **Usar cronômetro em cada pergunta** marcado, vale o tempo de cada pergunta e os pontos dependem da rapidez.
+   - Desmarcado, não há limite de tempo: cada acerto vale 1.000 pontos + bônus de sequência, e o tempo só desempata.
 3. O telão mostra o ranking ao vivo e quantos já concluíram.
 4. Clique em **Encerrar sala e mostrar pódio** para fechar e exibir o pódio final.
 

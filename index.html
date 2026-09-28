@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1016">
+  <title>CIPA em Jogo</title>
+  <meta name="description" content="Quiz gamificado de Segurança do Trabalho e Prevenção ao Assédio — CIPA Supermercados Rondon">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%23FFC400' d='M8 44c0-14 10-26 24-26s24 12 24 26z'/><rect x='4' y='42' width='56' height='8' rx='3' fill='%23E0A800'/><rect x='28' y='14' width='8' height='14' rx='2' fill='%23E0A800'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js" defer></script>
+</head>
+<body>
+  <div class="stripe"></div>
+  <header class="topbar">
+    <div class="logo">
+      <svg class="helmet" viewBox="0 0 64 64" aria-hidden="true"><path fill="#FFC400" d="M8 44c0-14 10-26 24-26s24 12 24 26z"/><rect x="4" y="42" width="56" height="8" rx="3" fill="#E0A800"/><rect x="28" y="14" width="8" height="14" rx="2" fill="#E0A800"/></svg>
+      <div>CIPA em Jogo<small>Segurança · Respeito</small></div>
+    </div>
+    <button id="btn-leave" class="btn btn-ghost btn-sm hidden" type="button">Sair</button>
+  </header>
+
+  <main class="wrap" id="main">
+    <!-- ENTRAR -->
+    <section id="s-join" class="screen">
+      <div class="center" style="margin: 8px 0 20px">
+        <h1>Bora jogar?</h1>
+        <p class="muted">Teste o que você sabe sobre Segurança do Trabalho e Prevenção ao Assédio.</p>
+      </div>
+      <div class="card hazard">
+        <form id="form-pin" autocomplete="off">
+          <div class="field">
+            <label for="pin">PIN da sala</label>
+            <input id="pin" class="pin-input" type="text" inputmode="numeric" maxlength="6" placeholder="000000" aria-describedby="pin-help">
+            <p id="pin-help" class="small muted" style="margin-top:6px">O PIN aparece no telão ou com o organizador.</p>
+          </div>
+          <button class="btn btn-primary btn-lg btn-block" type="submit" id="btn-pin">Continuar</button>
+        </form>
+
+        <form id="form-join" class="hidden" autocomplete="off">
+          <div class="row between" style="margin-bottom:14px">
+            <div>
+              <div class="small muted">Sala</div>
+              <b id="join-session-name"></b>
+            </div>
+            <span id="join-mode" class="chip yellow"></span>
+          </div>
+          <div class="field">
+            <label for="name">Seu nome</label>
+            <input id="name" type="text" maxlength="40" placeholder="Nome e sobrenome" autocomplete="name" required>
+          </div>
+          <div class="field" id="store-field"></div>
+          <button class="btn btn-primary btn-lg btn-block" type="submit" id="btn-join">Entrar no jogo</button>
+          <button class="btn btn-ghost btn-block" type="button" id="btn-back" style="margin-top:8px">Trocar PIN</button>
+        </form>
+        <p id="join-msg" class="small" style="color:#ff9a9d;margin:12px 0 0" role="alert"></p>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h3>Como funciona a pontuação</h3>
+        <ul class="small muted" style="margin:0;padding-left:18px">
+          <li><b style="color:var(--text)">Até 1.000 pontos</b> por acerto: quanto mais rápido, mais pontos.</li>
+          <li><b style="color:var(--text)">Bônus de sequência:</b> +100 a cada acerto seguido (até +500).</li>
+          <li>Ganhe <b style="color:var(--text)">medalhas</b> e dispute o <b style="color:var(--text)">pódio</b> e o ranking das lojas.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- JOGO -->
+    <section id="s-game" class="screen"><div id="game"></div></section>
+
+    <!-- ERRO -->
+    <section id="s-error" class="screen">
+      <div class="card center">
+        <div style="font-size:3rem">📡</div>
+        <h2>Ops, algo deu errado</h2>
+        <p class="muted" id="error-msg"></p>
+        <button class="btn btn-primary" id="btn-retry" type="button">Tentar novamente</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="assets/js/player.js"></script>
+</body>
+</html>

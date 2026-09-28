@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1016">
+  <meta name="robots" content="noindex">
+  <title>Painel CIPA em Jogo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%23FFC400' d='M8 44c0-14 10-26 24-26s24 12 24 26z'/><rect x='4' y='42' width='56' height='8' rx='3' fill='%23E0A800'/><rect x='28' y='14' width='8' height='14' rx='2' fill='%23E0A800'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/admin.css">
+</head>
+<body>
+  <div class="stripe"></div>
+  <header class="topbar">
+    <div class="logo">
+      <svg class="helmet" viewBox="0 0 64 64" aria-hidden="true"><path fill="#FFC400" d="M8 44c0-14 10-26 24-26s24 12 24 26z"/><rect x="4" y="42" width="56" height="8" rx="3" fill="#E0A800"/><rect x="28" y="14" width="8" height="14" rx="2" fill="#E0A800"/></svg>
+      <div>CIPA em Jogo<small>Painel do administrador</small></div>
+    </div>
+    <button id="btn-logout" class="btn btn-ghost btn-sm hidden" type="button">Sair</button>
+  </header>
+
+  <main class="wrap wide" id="main">
+    <!-- LOGIN -->
+    <section id="v-login" class="screen">
+      <div class="card hazard narrow" style="margin-top:6vh">
+        <h2>Acesso do administrador</h2>
+        <form id="form-login">
+          <div class="field">
+            <label for="login-pass">Senha</label>
+            <input id="login-pass" type="password" autocomplete="current-password" required>
+          </div>
+          <button class="btn btn-primary btn-lg btn-block" type="submit">Entrar</button>
+          <p id="login-msg" class="small" style="color:#ff9a9d;margin:12px 0 0" role="alert"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- APP -->
+    <section id="v-app" class="screen">
+      <div id="default-pass-warning" class="banner hidden">
+        ⚠️ Você está usando a <b>senha padrão</b>. Troque em <a href="#config">Configurações</a> antes do encontro.
+      </div>
+      <nav class="tabs" aria-label="Seções">
+        <a href="#sessoes" data-tab="sessoes">🎮 Sessões</a>
+        <a href="#perguntas" data-tab="perguntas">📝 Perguntas</a>
+        <a href="#relatorios" data-tab="relatorios">📊 Relatórios</a>
+        <a href="#config" data-tab="config">⚙️ Configurações</a>
+      </nav>
+      <div id="panel"></div>
+    </section>
+  </main>
+
+  <div id="modal-root"></div>
+  <script type="module" src="assets/js/admin.js"></script>
+</body>
+</html>

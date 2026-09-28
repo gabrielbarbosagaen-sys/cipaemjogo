@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d1016">
+  <title>Telão CIPA em Jogo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path fill='%23FFC400' d='M8 44c0-14 10-26 24-26s24 12 24 26z'/><rect x='4' y='42' width='56' height='8' rx='3' fill='%23E0A800'/><rect x='28' y='14' width='8' height='14' rx='2' fill='%23E0A800'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/telao.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js" defer></script>
+</head>
+<body class="tv">
+  <div class="stripe"></div>
+  <header class="tv-top">
+    <div class="logo">
+      <svg class="helmet" viewBox="0 0 64 64" aria-hidden="true"><path fill="#FFC400" d="M8 44c0-14 10-26 24-26s24 12 24 26z"/><rect x="4" y="42" width="56" height="8" rx="3" fill="#E0A800"/><rect x="28" y="14" width="8" height="14" rx="2" fill="#E0A800"/></svg>
+      <div>CIPA em Jogo<small id="tv-session">Segurança · Respeito</small></div>
+    </div>
+    <div class="row" id="tv-top-right"></div>
+  </header>
+
+  <main id="tv-main">
+    <section id="s-setup" class="screen">
+      <div class="card narrow center" style="margin-top:8vh">
+        <h2>Abrir telão</h2>
+        <p class="muted">Digite o PIN da sala para projetar o jogo.</p>
+        <form id="form-setup">
+          <input id="setup-pin" class="pin-input" type="text" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="PIN da sala">
+          <button class="btn btn-primary btn-lg btn-block" style="margin-top:14px" type="submit">Abrir</button>
+        </form>
+        <p id="setup-msg" class="small" style="color:#ff9a9d;margin-top:10px" role="alert"></p>
+      </div>
+    </section>
+    <section id="s-tv" class="screen"><div id="tv"></div></section>
+  </main>
+
+  <div id="controls" class="tv-controls hidden" aria-label="Controles do apresentador"></div>
+
+  <script type="module" src="assets/js/telao.js"></script>
+</body>
+</html>

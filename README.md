@@ -16,12 +16,12 @@ Os participantes jogam pelo celular. O telão mostra as perguntas, o ranking e o
 1. Entre em <https://supabase.com> → **New project**.
    - Nome: `cipa-em-jogo` · Região: **South America (São Paulo)** · crie uma senha do banco e guarde.
 2. Quando o projeto terminar de criar, abra **SQL Editor** → **New query**.
-3. Abra o arquivo [`supabase/schema.sql`](supabase/schema.sql), copie **todo** o conteúdo, cole no editor e clique em **Run**.
+3. Abra o arquivo [`schema.sql`](schema.sql), copie **todo** o conteúdo, cole no editor e clique em **Run**.
    Deve aparecer *"Success. No rows returned"*. As 23 perguntas do quiz já entram prontas, com gabarito e explicações.
 4. Vá em **Project Settings → API** (ou **API Keys**) e copie:
    - **Project URL** (ex.: `https://abcdxyz.supabase.co`)
    - a chave pública **anon** / **publishable** (⚠️ nunca use a chave `service_role` / `secret`)
-5. Abra [`assets/js/config.js`](assets/js/config.js) e cole os dois valores:
+5. Abra [`config.js`](config.js) e cole os dois valores:
 
 ```js
 export const SUPABASE_URL = 'https://abcdxyz.supabase.co';
@@ -37,7 +37,7 @@ export const SUPABASE_KEY = 'eyJhbGciOi...';   // ou sb_publishable_...
 
 1. Em <https://github.com/new> crie um repositório **público** chamado `cipa-em-jogo`.
 2. Envie os arquivos desta pasta:
-   - **Pelo site:** clique em *uploading an existing file*, arraste **todo o conteúdo** da pasta `cipa-em-jogo` (incluindo as pastas `assets` e `supabase`) e clique em *Commit changes*.
+   - **Pelo site:** clique em *uploading an existing file*, arraste **todo o conteúdo** da pasta `cipa-em-jogo` (são só arquivos, sem subpastas) e clique em *Commit changes*.
    - **Pelo terminal:**
 
 ```bash
@@ -132,7 +132,7 @@ Em **📊 Relatórios** ficam todas as sessões (histórico dos encontros), com:
 
 | Problema | Solução |
 |---|---|
-| A tela mostra "Falta configurar o Supabase" | Preencha `assets/js/config.js` e envie de novo ao GitHub. |
+| A tela mostra "Falta configurar o Supabase" | Preencha `config.js` e envie de novo ao GitHub. |
 | "Senha de administrador inválida" | Senha inicial: `cipa2026`. Se trocou e esqueceu, rode no SQL Editor: `update app_settings set admin_hash = extensions.crypt('NovaSenha', extensions.gen_salt('bf'));` |
 | Participante fechou o navegador | É só abrir o link de novo no mesmo celular: ele volta para o jogo com a pontuação. |
 | Nome repetido | O sistema não aceita o mesmo nome na mesma loja. Peça para incluir o sobrenome. |
@@ -146,13 +146,12 @@ Em **📊 Relatórios** ficam todas as sessões (histórico dos encontros), com:
 ## Estrutura
 
 ```
-cipa-em-jogo/
-├── index.html          → participante
-├── telao.html          → telão / projetor
-├── admin.html          → painel do administrador
-├── assets/
-│   ├── css/            → style.css (tema), telao.css, admin.css
-│   └── js/             → config.js (chaves), common.js, player.js, telao.js, admin.js
-└── supabase/
-    └── schema.sql      → banco, regras de pontuação e as 23 perguntas
+cipa-em-jogo/            (tudo na raiz, sem subpastas)
+├── index.html  player.js   → participante (celular)
+├── telao.html  telao.js    → telão / projetor
+├── admin.html  admin.js    → painel do administrador
+├── style.css  telao.css  admin.css
+├── common.js               → funções compartilhadas
+├── config.js               → URL e chave do Supabase
+└── schema.sql              → banco, regras de pontuação e as 23 perguntas
 ```

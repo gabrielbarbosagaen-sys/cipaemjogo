@@ -189,7 +189,7 @@ export function playerUrl(pin) {
 export function notConfiguredHtml() {
   return `<div class="card center narrow">
     <h2>Falta configurar o Supabase</h2>
-    <p class="muted">Abra o arquivo <code>assets/js/config.js</code> e informe a URL do projeto e a chave pública (anon/publishable).
+    <p class="muted">Abra o arquivo <code>config.js</code> e informe a URL do projeto e a chave pública (anon/publishable).
     O passo a passo está no arquivo <code>README.md</code>.</p></div>`;
 }
 

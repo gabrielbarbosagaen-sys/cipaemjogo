@@ -106,3 +106,7 @@ body.tv { font-size: clamp(16px, 1.25vw, 26px); overflow-x: hidden; }
   .tv-row { grid-template-columns: 3rem 1fr auto; font-size: 1.2rem; }
   .tv-row .gain { display: none; }
 }
+
+/* contagem do avanço automático */
+.auto-chip { position: fixed; right: 2.5vw; bottom: 2.5vh; padding: 10px 18px; border-radius: 999px; background: rgba(255, 196, 0, .15); border: 1px solid rgba(255, 196, 0, .5); color: var(--yellow-2); font-weight: 800; font-size: 1.3rem; z-index: 35; }
+.auto-chip:empty { display: none; }

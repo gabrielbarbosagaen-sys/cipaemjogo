@@ -77,6 +77,14 @@ create unique index if not exists sessions_active_pin
   on public.sessions (pin) where status not in ('finished', 'closed');
 -- cronômetro por pergunta (no modo "no seu ritmo" pode ser desligado)
 alter table public.sessions add column if not exists timed boolean not null default true;
+-- horário de validade (modo "no seu ritmo"): a sala abre e fecha sozinha
+alter table public.sessions add column if not exists opens_at timestamptz;
+alter table public.sessions add column if not exists closes_at timestamptz;
+-- avanço automático das perguntas
+alter table public.sessions add column if not exists auto_advance boolean not null default false;
+alter table public.sessions add column if not exists phase_started_at timestamptz;
+-- uma participação por matrícula
+alter table public.sessions add column if not exists require_matricula boolean not null default false;
 
 -- Cópia das perguntas no momento do jogo (o histórico não muda se as perguntas forem editadas depois)
 create table if not exists public.session_questions (
@@ -110,14 +118,22 @@ create table if not exists public.players (
   finished_at          timestamptz,
   joined_at            timestamptz not null default now()
 );
-create unique index if not exists players_unique_name
-  on public.players (session_id, lower(name), lower(store));
+-- nomes repetidos agora são verificados na entrada (com matrícula, homônimos são permitidos)
+drop index if exists public.players_unique_name;
 create index if not exists players_session_idx on public.players (session_id);
 
 create table if not exists public.player_tokens (
   player_id  uuid primary key references public.players(id) on delete cascade,
   token      uuid not null default gen_random_uuid()
 );
+
+-- dados que não podem ficar públicos (matrícula)
+create table if not exists public.player_private (
+  player_id   uuid primary key references public.players(id) on delete cascade,
+  session_id  uuid not null references public.sessions(id) on delete cascade,
+  matricula   text not null
+);
+create unique index if not exists player_private_matricula on public.player_private (session_id, matricula);
 
 create table if not exists public.answers (
   id          bigint generated always as identity primary key,
@@ -146,10 +162,11 @@ alter table public.session_questions enable row level security;
 alter table public.players           enable row level security;
 alter table public.player_tokens     enable row level security;
 alter table public.answers           enable row level security;
+alter table public.player_private    enable row level security;
 
 do $$ begin
   execute 'revoke all on public.app_settings, public.quizzes, public.questions, public.session_questions,
-           public.player_tokens, public.answers from anon, authenticated';
+           public.player_tokens, public.player_private, public.answers from anon, authenticated';
   execute 'revoke insert, update, delete, truncate on public.sessions, public.players from anon, authenticated';
   execute 'grant select on public.sessions, public.players to anon, authenticated';
 exception when undefined_object then null;
@@ -276,22 +293,74 @@ begin
   loop
     perform private.score_answer(pl, s.current_index, null, q.time_limit * 1000, q);
   end loop;
-  update public.sessions set status = 'reveal', paused_at = null where id = s.id;
+  update public.sessions set status = 'reveal', paused_at = null, phase_started_at = clock_timestamp() where id = s.id;
 end $$;
 
--- Revela automaticamente quando o tempo acaba ou todos já responderam
+-- Mostra o ranking (depois da revelação)
+create or replace function private.show_ranking(p_session uuid)
+returns void language plpgsql set search_path = public as $$
+begin
+  update public.sessions set status = 'ranking', phase_started_at = clock_timestamp()
+   where id = p_session and status = 'reveal';
+end $$;
+
+-- Vai para a próxima pergunta (ou encerra, se era a última)
+create or replace function private.next_question(p_session uuid)
+returns void language plpgsql set search_path = public as $$
+declare s public.sessions; v_total int;
+begin
+  select * into s from public.sessions where id = p_session for update;
+  if not found or s.status not in ('reveal', 'ranking') then return; end if;
+  select count(*) into v_total from public.session_questions where session_id = s.id;
+  if s.current_index + 1 >= v_total then
+    update public.sessions set status = 'finished', finished_at = clock_timestamp(), phase_started_at = clock_timestamp()
+     where id = s.id;
+  else
+    update public.sessions set status = 'question', current_index = current_index + 1, paused_at = null,
+           question_started_at = clock_timestamp() + interval '4 seconds', phase_started_at = clock_timestamp()
+     where id = s.id;
+  end if;
+end $$;
+
+-- Modo ao vivo: revela quando o tempo acaba ou todos respondem; com avanço automático,
+-- mostra o ranking 10 s depois da revelação e passa para a próxima pergunta 6 s depois.
 create or replace function private.tick(p_session uuid)
 returns void language plpgsql set search_path = public as $$
 declare s public.sessions; v_limit int; v_active int; v_answered int;
 begin
   select * into s from public.sessions where id = p_session;
-  if not found or s.mode <> 'live' or s.status <> 'question' or s.paused_at is not null then return; end if;
-  select time_limit into v_limit from public.session_questions where session_id = s.id and idx = s.current_index;
-  select count(*) into v_active from public.players where session_id = s.id;
-  select count(*) into v_answered from public.answers where session_id = s.id and q_index = s.current_index;
-  if clock_timestamp() > s.question_started_at + make_interval(secs => v_limit + 1)
-     or (v_active > 0 and v_answered >= v_active and clock_timestamp() >= s.question_started_at) then
-    perform private.reveal(s.id);
+  if not found or s.mode <> 'live' or s.paused_at is not null then return; end if;
+  if s.status = 'question' then
+    select time_limit into v_limit from public.session_questions where session_id = s.id and idx = s.current_index;
+    select count(*) into v_active from public.players where session_id = s.id;
+    select count(*) into v_answered from public.answers where session_id = s.id and q_index = s.current_index;
+    if clock_timestamp() > s.question_started_at + make_interval(secs => v_limit + 1)
+       or (v_active > 0 and v_answered >= v_active and clock_timestamp() >= s.question_started_at) then
+      perform private.reveal(s.id);
+    end if;
+  elsif s.auto_advance and s.status = 'reveal' and clock_timestamp() >= s.phase_started_at + interval '10 seconds' then
+    perform private.show_ranking(s.id);
+  elsif s.auto_advance and s.status = 'ranking' and clock_timestamp() >= s.phase_started_at + interval '6 seconds' then
+    perform private.next_question(s.id);
+  end if;
+end $$;
+
+-- Modo no seu ritmo: abre e fecha a sala sozinha conforme o horário configurado
+create or replace function private.sched_tick(p_session uuid)
+returns void language plpgsql set search_path = public as $$
+declare s public.sessions;
+begin
+  select * into s from public.sessions where id = p_session;
+  if not found or s.mode <> 'self' then return; end if;
+  if s.status in ('lobby', 'open') and s.closes_at is not null and clock_timestamp() >= s.closes_at then
+    update public.sessions set status = 'closed', finished_at = coalesce(finished_at, s.closes_at)
+     where id = s.id and status in ('lobby', 'open');
+  elsif s.status = 'lobby' and s.opens_at is not null and clock_timestamp() >= s.opens_at then
+    select * into s from public.sessions where id = p_session for update;
+    if s.status = 'lobby' then
+      perform private.snapshot(s.id);
+      update public.sessions set status = 'open', started_at = clock_timestamp() where id = s.id;
+    end if;
   end if;
 end $$;
 
@@ -365,7 +434,9 @@ returns jsonb language sql stable as $$
     'question_started_at', s.question_started_at, 'paused_at', s.paused_at,
     'show_explanation', s.show_explanation, 'shuffle_options', s.shuffle_options, 'timed', s.timed,
     'shuffle_questions', s.shuffle_questions, 'created_at', s.created_at,
-    'started_at', s.started_at, 'finished_at', s.finished_at)
+    'started_at', s.started_at, 'finished_at', s.finished_at,
+    'opens_at', s.opens_at, 'closes_at', s.closes_at, 'auto_advance', s.auto_advance,
+    'phase_started_at', s.phase_started_at, 'require_matricula', s.require_matricula)
 $$;
 
 create or replace function private.store_ranking(p_session uuid)
@@ -403,18 +474,25 @@ begin
   if not found then
     raise exception 'PIN não encontrado. Confira o número com o organizador.' using errcode = 'P0002';
   end if;
+  perform private.sched_tick(s.id);
+  select * into s from public.sessions where id = s.id;
   select stores into v_stores from public.app_settings where id = 1;
   return jsonb_build_object('id', s.id, 'name', s.name, 'mode', s.mode, 'status', s.status, 'pin', s.pin,
+                            'require_matricula', s.require_matricula, 'opens_at', s.opens_at, 'closes_at', s.closes_at,
                             'stores', coalesce(to_jsonb(v_stores), '[]'::jsonb));
 end $$;
 
-create or replace function public.join_session(p_pin text, p_name text, p_store text)
+drop function if exists public.join_session(text, text, text);
+create or replace function public.join_session(p_pin text, p_name text, p_store text, p_matricula text default null)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   s public.sessions;
   v_name  text := btrim(regexp_replace(coalesce(p_name, ''), '\s+', ' ', 'g'));
   v_store text := btrim(regexp_replace(coalesce(p_store, ''), '\s+', ' ', 'g'));
+  v_mat   text := upper(regexp_replace(coalesce(p_matricula, ''), '\s+', '', 'g'));
+  v_sid uuid;
   v_id uuid;
+  v_existing_name text;
   v_token uuid;
 begin
   if length(v_name) < 2 then raise exception 'Informe seu nome.'; end if;
@@ -422,16 +500,40 @@ begin
   v_name  := left(v_name, 40);
   v_store := left(v_store, 40);
 
-  select * into s from public.sessions
+  select id into v_sid from public.sessions
    where pin = btrim(p_pin) and status not in ('finished', 'closed') limit 1;
+  if v_sid is not null then perform private.sched_tick(v_sid); end if;
+  select * into s from public.sessions where id = v_sid and status not in ('finished', 'closed');
   if not found then raise exception 'Sala não encontrada ou já encerrada.'; end if;
 
-  begin
-    insert into public.players (session_id, name, store) values (s.id, v_name, v_store) returning id into v_id;
-  exception when unique_violation then
+  if s.require_matricula then
+    if v_mat = '' then raise exception 'Informe sua matrícula.'; end if;
+    if length(v_mat) > 30 then raise exception 'Matrícula inválida.'; end if;
+    select pp.player_id, p.name into v_id, v_existing_name
+      from public.player_private pp join public.players p on p.id = pp.player_id
+     where pp.session_id = s.id and pp.matricula = v_mat;
+    if v_id is not null then
+      if lower(v_existing_name) = lower(v_name) then
+        -- a mesma pessoa voltando (ex.: trocou de celular): continua de onde parou; o aparelho anterior é desconectado
+        update public.player_tokens set token = gen_random_uuid() where player_id = v_id returning token into v_token;
+        return jsonb_build_object('player_id', v_id, 'token', v_token, 'session_id', s.id, 'pin', s.pin, 'resumed', true);
+      end if;
+      raise exception 'Esta matrícula já participou desta sessão. Cada pessoa pode responder apenas uma vez.';
+    end if;
+  elsif exists (select 1 from public.players
+                 where session_id = s.id and lower(name) = lower(v_name) and lower(store) = lower(v_store)) then
     raise exception 'Já existe um participante com esse nome nesta loja. Use também o sobrenome.';
-  end;
+  end if;
+
+  insert into public.players (session_id, name, store) values (s.id, v_name, v_store) returning id into v_id;
   insert into public.player_tokens (player_id) values (v_id) returning token into v_token;
+  if s.require_matricula then
+    begin
+      insert into public.player_private (player_id, session_id, matricula) values (v_id, s.id, v_mat);
+    exception when unique_violation then
+      raise exception 'Esta matrícula já participou desta sessão. Cada pessoa pode responder apenas uma vez.';
+    end;
+  end if;
 
   return jsonb_build_object('player_id', v_id, 'token', v_token, 'session_id', s.id, 'pin', s.pin);
 end $$;
@@ -444,6 +546,7 @@ declare
   v_total int; v_players int; v_finished int; v_answered int;
   v_q jsonb; v_me jsonb; v_board jsonb; v_dist jsonb;
 begin
+  perform private.sched_tick(p_session);
   perform private.tick(p_session);
   select * into s from public.sessions where id = p_session;
   if not found then raise exception 'Sessão não encontrada.' using errcode = 'P0002'; end if;
@@ -534,6 +637,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.players; s public.sessions; q public.session_questions; v_total int; v_order int[];
 begin
   me := private.assert_player(p_player, p_token);
+  perform private.sched_tick(me.session_id);
   select * into s from public.sessions where id = me.session_id;
   if s.mode <> 'self' then raise exception 'Ação inválida para esta sala.'; end if;
   if s.status = 'lobby' then return jsonb_build_object('state', 'waiting'); end if;
@@ -583,6 +687,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare me public.players; s public.sessions; q public.session_questions; a public.answers; v_total int; v_elapsed int;
 begin
   me := private.assert_player(p_player, p_token);
+  perform private.sched_tick(me.session_id);
   select * into s from public.sessions where id = me.session_id;
   if s.mode <> 'self' or s.status <> 'open' then
     raise exception 'Esta sala não está aberta para respostas.';
@@ -621,6 +726,7 @@ create or replace function public.session_results(p_session uuid)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare s public.sessions; v_total int; v_rank jsonb;
 begin
+  perform private.sched_tick(p_session);
   select * into s from public.sessions where id = p_session;
   if not found then raise exception 'Sessão não encontrada.' using errcode = 'P0002'; end if;
   select count(*) into v_total from public.session_questions where session_id = s.id;
@@ -787,19 +893,39 @@ begin
 end $$;
 
 drop function if exists public.admin_create_session(text, text, uuid, text, boolean, boolean, boolean);
-create or replace function public.admin_create_session(
-  p_pass text, p_name text, p_quiz uuid, p_mode text,
-  p_shuffle_questions boolean, p_shuffle_options boolean, p_show_explanation boolean,
-  p_timed boolean default true)
+drop function if exists public.admin_create_session(text, text, uuid, text, boolean, boolean, boolean, boolean);
+
+-- Valida o horário de validade
+create or replace function private.check_schedule(p_opens timestamptz, p_closes timestamptz)
+returns void language plpgsql as $$
+begin
+  if p_closes is not null and p_opens is not null and p_closes <= p_opens then
+    raise exception 'O horário de encerramento precisa ser depois do horário de abertura.';
+  end if;
+  if p_closes is not null and p_closes <= clock_timestamp() then
+    raise exception 'O horário de encerramento já passou.';
+  end if;
+end $$;
+
+-- Cria sessão. p_opts: name, quiz_id, mode, shuffle_questions, shuffle_options, show_explanation,
+-- timed, auto_advance, require_matricula, opens_at, closes_at
+create or replace function public.admin_create_session(p_pass text, p_opts jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare v_pin text; v_id uuid; v_title text; v_count int;
+declare
+  v_pin text; v_id uuid; v_title text; v_count int;
+  v_quiz uuid := nullif(p_opts->>'quiz_id', '')::uuid;
+  v_mode text := p_opts->>'mode';
+  v_opens timestamptz := nullif(p_opts->>'opens_at', '')::timestamptz;
+  v_closes timestamptz := nullif(p_opts->>'closes_at', '')::timestamptz;
 begin
   perform private.assert_admin(p_pass);
-  select title into v_title from public.quizzes where id = p_quiz;
+  select title into v_title from public.quizzes where id = v_quiz;
   if not found then raise exception 'Escolha um questionário.'; end if;
-  select count(*) into v_count from public.questions where quiz_id = p_quiz;
+  select count(*) into v_count from public.questions where quiz_id = v_quiz;
   if v_count = 0 then raise exception 'O questionário escolhido não tem perguntas.'; end if;
-  if p_mode not in ('live', 'self') then raise exception 'Modo inválido.'; end if;
+  if v_mode is null or v_mode not in ('live', 'self') then raise exception 'Modo inválido.'; end if;
+  if v_mode = 'live' then v_opens := null; v_closes := null; end if;
+  perform private.check_schedule(v_opens, v_closes);
 
   loop
     v_pin := lpad(floor(random() * 1000000)::int::text, 6, '0');
@@ -807,20 +933,51 @@ begin
       select 1 from public.sessions where pin = v_pin and status not in ('finished', 'closed'));
   end loop;
 
-  insert into public.sessions (pin, name, quiz_id, quiz_title, mode, shuffle_questions, shuffle_options, show_explanation, timed)
-  values (v_pin, coalesce(nullif(btrim(p_name), ''), 'Encontro CIPA'), p_quiz, v_title, p_mode,
-          coalesce(p_shuffle_questions, false) and p_mode = 'self',
-          coalesce(p_shuffle_options, false), coalesce(p_show_explanation, true),
-          p_mode = 'live' or coalesce(p_timed, true))
+  insert into public.sessions (pin, name, quiz_id, quiz_title, mode, shuffle_questions, shuffle_options,
+                               show_explanation, timed, auto_advance, require_matricula, opens_at, closes_at)
+  values (v_pin, coalesce(nullif(btrim(p_opts->>'name'), ''), 'Encontro CIPA'), v_quiz, v_title, v_mode,
+          coalesce((p_opts->>'shuffle_questions')::boolean, false) and v_mode = 'self',
+          coalesce((p_opts->>'shuffle_options')::boolean, false),
+          coalesce((p_opts->>'show_explanation')::boolean, true),
+          v_mode = 'live' or coalesce((p_opts->>'timed')::boolean, true),
+          coalesce((p_opts->>'auto_advance')::boolean, false),
+          coalesce((p_opts->>'require_matricula')::boolean, false),
+          v_opens, v_closes)
   returning id into v_id;
   perform private.snapshot(v_id);
   return jsonb_build_object('id', v_id, 'pin', v_pin);
+end $$;
+
+-- Altera nome, avanço automático e horário de uma sessão existente (só as chaves enviadas)
+create or replace function public.admin_update_session(p_pass text, p_session uuid, p_opts jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare s public.sessions; v_opens timestamptz; v_closes timestamptz;
+begin
+  perform private.assert_admin(p_pass);
+  select * into s from public.sessions where id = p_session for update;
+  if not found then raise exception 'Sessão não encontrada.'; end if;
+  v_opens  := case when p_opts ? 'opens_at'  then nullif(p_opts->>'opens_at', '')::timestamptz  else s.opens_at end;
+  v_closes := case when p_opts ? 'closes_at' then nullif(p_opts->>'closes_at', '')::timestamptz else s.closes_at end;
+  if s.mode = 'self' and (v_opens is distinct from s.opens_at or v_closes is distinct from s.closes_at) then
+    perform private.check_schedule(case when s.status = 'lobby' then v_opens end, v_closes);
+  end if;
+  update public.sessions set
+    name         = coalesce(nullif(btrim(p_opts->>'name'), ''), name),
+    auto_advance = coalesce((p_opts->>'auto_advance')::boolean, auto_advance),
+    opens_at     = case when mode = 'self' then v_opens end,
+    closes_at    = case when mode = 'self' then v_closes end,
+    phase_started_at = case when coalesce((p_opts->>'auto_advance')::boolean, false) and not auto_advance
+                            then clock_timestamp() else phase_started_at end
+  where id = s.id;
+  return jsonb_build_object('ok', true);
 end $$;
 
 create or replace function public.admin_list_sessions(p_pass text)
 returns jsonb language plpgsql security definer set search_path = public as $$
 begin
   perform private.assert_admin(p_pass);
+  perform private.sched_tick(id) from public.sessions
+   where mode = 'self' and status in ('lobby', 'open') and (opens_at is not null or closes_at is not null);
   return (select coalesce(jsonb_agg(private.session_json(s) || jsonb_build_object(
             'players',   (select count(*) from public.players p where p.session_id = s.id),
             'questions', (select count(*) from public.session_questions sq where sq.session_id = s.id),
@@ -834,6 +991,7 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare s public.sessions; v_total int;
 begin
   perform private.assert_admin(p_pass);
+  perform private.sched_tick(p_session);
   select * into s from public.sessions where id = p_session for update;
   if not found then raise exception 'Sessão não encontrada.'; end if;
   select count(*) into v_total from public.session_questions where session_id = s.id;
@@ -845,26 +1003,21 @@ begin
       select count(*) into v_total from public.session_questions where session_id = s.id;
       if v_total = 0 then raise exception 'O questionário não tem perguntas.'; end if;
       update public.sessions set status = 'question', current_index = 0, paused_at = null,
-             question_started_at = clock_timestamp() + interval '4 seconds', started_at = clock_timestamp()
+             question_started_at = clock_timestamp() + interval '4 seconds', started_at = clock_timestamp(),
+             phase_started_at = clock_timestamp()
        where id = s.id;
 
     when 'reveal' then
       if s.status = 'question' then perform private.reveal(s.id); end if;
 
     when 'ranking' then
-      if s.status = 'reveal' then update public.sessions set status = 'ranking' where id = s.id; end if;
+      perform private.show_ranking(s.id);
 
     when 'next' then
       if s.mode <> 'live' or s.status not in ('reveal', 'ranking') then
         raise exception 'Revele a resposta antes de avançar.';
       end if;
-      if s.current_index + 1 >= v_total then
-        update public.sessions set status = 'finished', finished_at = clock_timestamp() where id = s.id;
-      else
-        update public.sessions set status = 'question', current_index = current_index + 1, paused_at = null,
-               question_started_at = clock_timestamp() + interval '4 seconds'
-         where id = s.id;
-      end if;
+      perform private.next_question(s.id);
 
     when 'pause' then
       if s.status = 'question' and s.paused_at is null then
@@ -897,7 +1050,10 @@ begin
                     where pin = s.pin and id <> s.id and status not in ('finished', 'closed')) then
           raise exception 'O PIN desta sala está em uso por outra sessão ativa.';
         end if;
-        update public.sessions set status = 'open', finished_at = null where id = s.id;
+        -- reabrir manualmente: se o horário de encerramento já passou, ele é removido
+        update public.sessions set status = 'open', finished_at = null,
+               closes_at = case when closes_at <= clock_timestamp() then null else closes_at end
+         where id = s.id;
       end if;
 
     else
@@ -905,6 +1061,45 @@ begin
   end case;
 
   return jsonb_build_object('ok', true);
+end $$;
+
+-- Importa perguntas de uma planilha.
+-- p_questions: [{category, text, options[], correct_index, time_limit, explanation}]
+create or replace function public.admin_import_questions(p_pass text, p_quiz uuid, p_replace boolean, p_questions jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  q jsonb; v_pos int; v_opts text[]; v_n int := 0; v_line int := 0; v_correct int; v_time int;
+begin
+  perform private.assert_admin(p_pass);
+  if not exists (select 1 from public.quizzes where id = p_quiz) then raise exception 'Questionário não encontrado.'; end if;
+  if jsonb_typeof(p_questions) <> 'array' or jsonb_array_length(p_questions) = 0 then
+    raise exception 'A planilha não tem perguntas.';
+  end if;
+  if p_replace then delete from public.questions where quiz_id = p_quiz; end if;
+  select coalesce(max(position), 0) into v_pos from public.questions where quiz_id = p_quiz;
+
+  for q in select * from jsonb_array_elements(p_questions) loop
+    v_line := v_line + 1;
+    select coalesce(array_agg(btrim(x) order by ord), '{}') into v_opts
+      from jsonb_array_elements_text(coalesce(q->'options', '[]'::jsonb)) with ordinality as u(x, ord)
+     where btrim(x) <> '';
+    v_correct := (q->>'correct_index')::int;
+    v_time := coalesce((q->>'time_limit')::int, 30);
+    if coalesce(btrim(q->>'text'), '') = '' then raise exception 'Pergunta %: enunciado em branco.', v_line; end if;
+    if coalesce(array_length(v_opts, 1), 0) < 2 or array_length(v_opts, 1) > 6 then
+      raise exception 'Pergunta %: informe de 2 a 6 alternativas.', v_line;
+    end if;
+    if v_correct is null or v_correct < 0 or v_correct >= array_length(v_opts, 1) then
+      raise exception 'Pergunta %: resposta correta inválida.', v_line;
+    end if;
+    if v_time < 5 or v_time > 300 then raise exception 'Pergunta %: o tempo deve ficar entre 5 e 300 segundos.', v_line; end if;
+    v_pos := v_pos + 1;
+    insert into public.questions (quiz_id, position, category, text, options, correct_index, time_limit, explanation)
+    values (p_quiz, v_pos, coalesce(nullif(btrim(q->>'category'), ''), 'Geral'), btrim(q->>'text'),
+            v_opts, v_correct, v_time, nullif(btrim(q->>'explanation'), ''));
+    v_n := v_n + 1;
+  end loop;
+  return jsonb_build_object('imported', v_n);
 end $$;
 
 create or replace function public.admin_remove_player(p_pass text, p_player uuid)
@@ -951,6 +1146,7 @@ begin
            'id', r.player_id, 'pos', r.pos, 'name', r.name, 'store', r.store, 'score', r.score,
            'correct', r.correct_count, 'answered', r.answered_count, 'best_streak', r.best_streak,
            'finished', r.finished, 'joined_at', r.joined_at,
+           'matricula', (select pp.matricula from public.player_private pp where pp.player_id = r.player_id),
            'avg_ms', (select round(avg(a.elapsed_ms)) from public.answers a where a.player_id = r.player_id and a.chosen is not null),
            'answered_current', exists (select 1 from public.answers a
                                         where a.player_id = r.player_id and a.q_index = s.current_index and a.chosen is not null),

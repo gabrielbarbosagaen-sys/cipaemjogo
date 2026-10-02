@@ -21,6 +21,13 @@ const statusChip = s => `<span class="chip ${STATUS[s]?.[1] || ''}">${STATUS[s]?
 const modeLabel = m => m === 'live' ? 'Ao vivo' : 'No seu ritmo';
 const fmtDate = iso => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '–';
 const telaoUrl = id => new URL('telao.html?s=' + id, location.href).href;
+// <input type="datetime-local"> trabalha no horário local, sem fuso
+const fromLocalInput = v => v ? new Date(v).toISOString() : null;
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 // =====================================================================
 //  LOGIN
@@ -105,10 +112,20 @@ async function loadSessions() {
             <label><input type="radio" name="mode" value="live" checked><span class="opt-card"><b>🎤 Ao vivo</b><small>Você controla as perguntas pelo telão; todos respondem ao mesmo tempo.</small></span></label>
             <label><input type="radio" name="mode" value="self"><span class="opt-card"><b>🏃 No seu ritmo</b><small>Cada participante responde sozinho enquanto a sala estiver aberta.</small></span></label>
           </div>
+          <label class="check"><input type="checkbox" id="n-matricula" checked><span>Exigir matrícula (uma participação por pessoa)<small>A mesma matrícula não consegue responder duas vezes nesta sessão. Quem trocar de celular volta com o mesmo nome e matrícula.</small></span></label>
+          <label class="check"><input type="checkbox" id="n-auto"><span>Avançar as perguntas automaticamente<small>Ao vivo: a resposta aparece por 10 s, o ranking por 6 s e a próxima pergunta entra sozinha. No seu ritmo: depois da explicação, a próxima pergunta entra sozinha.</small></span></label>
           <label class="check self-only"><input type="checkbox" id="n-timed" checked><span>Usar cronômetro em cada pergunta<small>Desmarcado: sem limite de tempo; cada acerto vale 1.000 pontos + bônus de sequência, e o tempo só desempata. (No modo ao vivo o cronômetro é sempre usado.)</small></span></label>
           <label class="check self-only"><input type="checkbox" id="n-shuffle-q"><span>Embaralhar a ordem das perguntas<small>Disponível apenas no modo "no seu ritmo".</small></span></label>
           <label class="check"><input type="checkbox" id="n-shuffle-o"><span>Embaralhar as alternativas em cada celular<small>Dificulta copiar a resposta do colega.</small></span></label>
           <label class="check"><input type="checkbox" id="n-expl" checked><span>Mostrar a explicação após cada resposta<small>Reforça o aprendizado.</small></span></label>
+          <fieldset class="self-only sched">
+            <legend>Horário de validade <span class="muted small">(opcional, só no modo "no seu ritmo")</span></legend>
+            <div class="row">
+              <div class="field grow"><label for="n-opens">Abre em</label><input id="n-opens" type="datetime-local"></div>
+              <div class="field grow"><label for="n-closes">Encerra em</label><input id="n-closes" type="datetime-local"></div>
+            </div>
+            <p class="small muted" style="margin:0">A sala abre e fecha sozinha nesses horários; fora deles as respostas não são aceitas. Deixe em branco para abrir e encerrar manualmente.</p>
+          </fieldset>
           <button class="btn btn-primary btn-lg btn-block" type="submit" id="btn-create">Criar sessão</button>
         </form>
       </div>
@@ -119,7 +136,7 @@ async function loadSessions() {
             <div class="pinbox">${s.pin}</div>
             <div class="grow">
               <b>${esc(s.name)}</b><br>
-              <span class="small muted">${modeLabel(s.mode)} · ${s.players} participante${s.players === 1 ? '' : 's'} · criada ${fmtDate(s.created_at)}</span>
+              <span class="small muted">${modeLabel(s.mode)} · ${s.players} participante${s.players === 1 ? '' : 's'} · ${s.closes_at ? `até ${fmtDate(s.closes_at)}` : `criada ${fmtDate(s.created_at)}`}</span>
             </div>
             ${statusChip(s.status)}
             <a class="btn btn-primary btn-sm" href="#sessao/${s.id}">Controlar</a>
@@ -132,7 +149,9 @@ async function loadSessions() {
     const self = $('input[name=mode]:checked').value === 'self';
     $('#n-shuffle-q').disabled = !self;
     $('#n-timed').disabled = !self;
-    if (!self) { $('#n-shuffle-q').checked = false; $('#n-timed').checked = true; }
+    $('#n-opens').disabled = !self;
+    $('#n-closes').disabled = !self;
+    if (!self) { $('#n-shuffle-q').checked = false; $('#n-timed').checked = true; $('#n-opens').value = ''; $('#n-closes').value = ''; }
     $$('.self-only').forEach(el => { el.style.opacity = self ? 1 : .5; });
   };
   $$('input[name=mode]').forEach(r => r.addEventListener('change', syncShuffle));
@@ -142,12 +161,18 @@ async function loadSessions() {
     e.preventDefault();
     withBusy($('#btn-create'), async () => {
       const r = await rpc('admin_create_session', {
-        ...P(), p_name: $('#n-name').value, p_quiz: $('#n-quiz').value,
-        p_mode: $('input[name=mode]:checked').value,
-        p_shuffle_questions: $('#n-shuffle-q').checked,
-        p_shuffle_options: $('#n-shuffle-o').checked,
-        p_show_explanation: $('#n-expl').checked,
-        p_timed: $('#n-timed').checked
+        ...P(), p_opts: {
+          name: $('#n-name').value, quiz_id: $('#n-quiz').value,
+          mode: $('input[name=mode]:checked').value,
+          shuffle_questions: $('#n-shuffle-q').checked,
+          shuffle_options: $('#n-shuffle-o').checked,
+          show_explanation: $('#n-expl').checked,
+          timed: $('#n-timed').checked,
+          auto_advance: $('#n-auto').checked,
+          require_matricula: $('#n-matricula').checked,
+          opens_at: fromLocalInput($('#n-opens').value),
+          closes_at: fromLocalInput($('#n-closes').value)
+        }
       });
       toast(`Sessão criada! PIN ${r.pin}`, 'success');
       location.hash = '#sessao/' + r.id;
@@ -160,7 +185,7 @@ async function loadSessions() {
 // =====================================================================
 function stopControl() {
   ctrl.unsub?.(); clearInterval(ctrl.poll); clearInterval(ctrl.tick);
-  Object.assign(ctrl, { id: null, unsub: null, poll: null, tick: null, state: null, report: null });
+  Object.assign(ctrl, { id: null, unsub: null, poll: null, tick: null, state: null, report: null, settingsEl: null });
 }
 
 async function openControl(id) {
@@ -215,16 +240,18 @@ function controlActions(s, st) {
 
 function statusLine(s, st) {
   if (s.mode === 'self') {
-    if (s.status === 'lobby') return `Os participantes podem entrar. Clique em <b>Abrir sala</b> para liberar as perguntas.`;
-    if (s.status === 'open') return `Sala aberta · <b>${st.finished_players}</b> de <b>${st.players}</b> concluíram`;
+    if (s.status === 'lobby') return s.opens_at
+      ? `Os participantes podem entrar. A sala abre sozinha em <b>${fmtDate(s.opens_at)}</b> (ou clique em <b>Abrir sala</b> para abrir agora).`
+      : `Os participantes podem entrar. Clique em <b>Abrir sala</b> para liberar as perguntas.`;
+    if (s.status === 'open') return `Sala aberta · <b>${st.finished_players}</b> de <b>${st.players}</b> concluíram${s.closes_at ? ` · encerra sozinha em <b>${fmtDate(s.closes_at)}</b>` : ''}`;
     return 'Sala encerrada. O pódio está disponível no telão e nos celulares.';
   }
   const q = st.question;
   switch (s.status) {
     case 'lobby': return `<b>${st.players}</b> participante${st.players === 1 ? '' : 's'} na sala. Quando todos entrarem, clique em <b>Iniciar jogo</b>.`;
     case 'question': return `Pergunta <b>${q.idx + 1}</b> de ${st.total_questions} · <span id="ctrl-timer">–</span> · <b>${q.answered}</b> de ${st.players} responderam${s.paused_at ? ' · <span class="chip yellow">PAUSADO</span>' : ''}`;
-    case 'reveal': return `Pergunta <b>${q.idx + 1}</b> revelada. Mostre o ranking ou avance.`;
-    case 'ranking': return `Ranking após a pergunta <b>${q.idx + 1}</b>.`;
+    case 'reveal': return `Pergunta <b>${q.idx + 1}</b> revelada. ${s.auto_advance ? '<span id="ctrl-auto"></span>' : 'Mostre o ranking ou avance.'}`;
+    case 'ranking': return `Ranking após a pergunta <b>${q.idx + 1}</b>. ${s.auto_advance ? '<span id="ctrl-auto"></span>' : ''}`;
     case 'finished': return 'Jogo encerrado. O pódio está no telão e nos celulares.';
   }
   return '';
@@ -232,6 +259,11 @@ function statusLine(s, st) {
 
 function tickControl() {
   const st = ctrl.state;
+  const auto = $('#ctrl-auto');
+  if (st && auto) {
+    const due = autoDueAt(st.session);
+    auto.textContent = due ? `Avança sozinho em ${Math.max(0, Math.ceil((due - now()) / 1000))} s.` : '';
+  }
   const el = $('#ctrl-timer');
   if (!st || !el || st.session.status !== 'question') return;
   const s = st.session;
@@ -240,6 +272,43 @@ function tickControl() {
   if (ref < start) { el.textContent = `começa em ${Math.ceil((start - ref) / 1000)} s`; return; }
   const left = Math.max(0, Math.ceil((start + st.question.time_limit * 1000 - ref) / 1000));
   el.textContent = `${left} s restantes`;
+}
+
+// Momento em que o avanço automático muda de etapa (resposta 10 s → ranking 6 s → próxima)
+function autoDueAt(s) {
+  if (!s.auto_advance || !s.phase_started_at) return null;
+  const secs = { reveal: 10, ranking: 6 }[s.status];
+  return secs ? Date.parse(s.phase_started_at) + secs * 1000 : null;
+}
+
+// Cartão de configurações: criado uma vez por sessão para não perder o que está sendo digitado
+function settingsCard(s) {
+  const el = document.createElement('div');
+  el.className = 'card';
+  const self = s.mode === 'self';
+  el.innerHTML = `
+    <h3>Configurações da sessão</h3>
+    <label class="check"><input type="checkbox" id="c-auto" ${s.auto_advance ? 'checked' : ''}><span>Avançar as perguntas automaticamente<small>${self ? 'A próxima pergunta entra sozinha depois da explicação.' : 'Resposta por 10 s, ranking por 6 s e a próxima pergunta entra sozinha.'}</small></span></label>
+    ${s.require_matricula ? '<p class="small"><span class="chip green">Matrícula exigida</span> Cada matrícula participa uma vez.</p>' : ''}
+    ${self ? `
+      <div class="row">
+        <div class="field grow"><label for="c-opens">Abre em</label><input id="c-opens" type="datetime-local" value="${toLocalInput(s.opens_at)}" ${s.status !== 'lobby' ? 'disabled' : ''}></div>
+        <div class="field grow"><label for="c-closes">Encerra em</label><input id="c-closes" type="datetime-local" value="${toLocalInput(s.closes_at)}"></div>
+      </div>
+      <button class="btn btn-sm" id="c-save-sched" type="button">Salvar horário</button>
+      <p class="small muted" style="margin:8px 0 0">Deixe em branco para abrir/encerrar manualmente.</p>` : ''}`;
+  const save = async (opts, btn) => withBusy(btn, async () => {
+    await rpc('admin_update_session', { ...P(), p_session: s.id, p_opts: opts });
+    toast('Configuração salva.', 'success');
+    await refreshControl();
+  });
+  $('#c-auto', el).addEventListener('change', e => save({ auto_advance: e.target.checked }, e.target));
+  $('#c-save-sched', el)?.addEventListener('click', e => {
+    const opts = { closes_at: fromLocalInput($('#c-closes', el).value) };
+    if (!$('#c-opens', el).disabled) opts.opens_at = fromLocalInput($('#c-opens', el).value);
+    save(opts, e.currentTarget);
+  });
+  return el;
 }
 
 function renderControl() {
@@ -281,6 +350,7 @@ function renderControl() {
             `<button class="btn ${cls}" data-action="${a}" type="button">${label}</button>`).join('')}</div>
           ${s.mode === 'live' ? '<p class="small muted" style="margin:12px 0 0">A resposta é revelada sozinha quando o tempo acaba ou quando todos respondem. Você também pode controlar pelo telão (Espaço = avançar).</p>' : ''}
         </div>
+        <div id="ctrl-settings-slot"></div>
         ${showCur ? `<div class="card qprev">
           <div class="row between"><h3 style="margin:0">Pergunta ${cur.idx + 1}</h3><span class="chip yellow">${esc(cur.category)}</span></div>
           <p style="font-weight:700;margin:10px 0">${esc(cur.text)}</p>
@@ -294,10 +364,11 @@ function renderControl() {
         <div class="row between"><h3 style="margin:0">Participantes (${rep.players.length})</h3>
           ${s.mode === 'live' && s.status === 'question' ? '<span class="small muted">✓ = já respondeu</span>' : ''}</div>
         ${rep.players.length ? `<div class="table-wrap" style="margin-top:12px"><table>
-          <thead><tr><th class="num">#</th><th>Nome</th><th>Loja/Setor</th><th class="num">Pontos</th><th class="num">Acertos</th><th></th><th></th></tr></thead>
+          <thead><tr><th class="num">#</th><th>Nome</th>${s.require_matricula ? '<th>Matrícula</th>' : ''}<th>Loja/Setor</th><th class="num">Pontos</th><th class="num">Acertos</th><th></th><th></th></tr></thead>
           <tbody>${rep.players.map(p => `<tr>
             <td class="num">${medal(p.pos) || p.pos}</td>
             <td>${esc(p.name)}</td>
+            ${s.require_matricula ? `<td class="muted">${esc(p.matricula || '')}</td>` : ''}
             <td class="muted">${esc(p.store)}</td>
             <td class="num"><b>${fmt(p.score)}</b></td>
             <td class="num">${p.correct}/${s.mode === 'self' ? total : p.answered}</td>
@@ -308,6 +379,13 @@ function renderControl() {
       </div>
     </div>`;
 
+  if (!ctrl.settingsEl || ctrl.settingsEl.dataset.mode !== s.status + s.auto_advance + s.opens_at + s.closes_at) {
+    if (!ctrl.settingsEl?.contains(document.activeElement)) {
+      ctrl.settingsEl = settingsCard(s);
+      ctrl.settingsEl.dataset.mode = s.status + s.auto_advance + s.opens_at + s.closes_at;
+    }
+  }
+  $('#ctrl-settings-slot').replaceWith(ctrl.settingsEl);
   tickControl();
   $('#btn-copy').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(link); toast('Link copiado!', 'success'); } catch { prompt('Copie o link:', link); }
@@ -350,12 +428,16 @@ function renderQuestions() {
         </div>
         <div class="row" style="align-self:flex-end">
           <button class="btn btn-sm" id="qz-new" type="button">+ Novo</button>
+          <button class="btn btn-sm" id="qz-download" type="button" ${quiz ? '' : 'disabled'}>⬇ Baixar planilha</button>
+          <button class="btn btn-sm" id="qz-import" type="button">⬆ Importar planilha</button>
+          <input type="file" id="qz-file" accept=".xlsx,.xls,.csv" hidden>
           ${quiz ? `<button class="btn btn-sm" id="qz-rename" type="button">Renomear</button>
           <button class="btn btn-sm" id="qz-dup" type="button">Duplicar</button>
           <button class="btn btn-sm btn-danger" id="qz-del" type="button">Excluir</button>` : ''}
         </div>
       </div>
-      <p class="small muted" style="margin:12px 0 0">As alterações valem para as próximas sessões. Sessões já criadas guardam uma cópia das perguntas.</p>
+      <p class="small muted" style="margin:12px 0 0">As alterações valem para as próximas sessões. Sessões já criadas guardam uma cópia das perguntas.
+        Para cadastrar muitas perguntas de uma vez: <b>baixe a planilha</b> (vem com as perguntas atuais), edite ou preencha no Excel e use <b>Importar planilha</b>.</p>
     </div>
     ${quiz ? `
     <div class="row between" style="margin:20px 0 12px">
@@ -405,6 +487,13 @@ function renderQuestions() {
     loadQuestionsTab().catch(handleError);
   });
   $('#q-add')?.addEventListener('click', () => editQuestion(null));
+  $('#qz-download')?.addEventListener('click', e => withBusy(e.currentTarget, () => downloadQuestionsSheet(quiz)));
+  $('#qz-import').addEventListener('click', () => $('#qz-file').click());
+  $('#qz-file').addEventListener('change', e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) importQuestionsSheet(file, quiz).catch(handleError);
+  });
   $$('[data-edit]').forEach(b => b.addEventListener('click', () => editQuestion(questions[b.dataset.edit])));
   $$('[data-del]').forEach(b => b.addEventListener('click', async () => {
     const q = questions[b.dataset.del];
@@ -420,6 +509,127 @@ function renderQuestions() {
   };
   $$('[data-up]').forEach(b => b.addEventListener('click', () => move(Number(b.dataset.up), -1)));
   $$('[data-down]').forEach(b => b.addEventListener('click', () => move(Number(b.dataset.down), 1)));
+}
+
+// =====================================================================
+//  PLANILHA DE PERGUNTAS (baixar modelo / importar)
+// =====================================================================
+const SHEET_COLS = ['Categoria', 'Pergunta', 'Alternativa A', 'Alternativa B', 'Alternativa C', 'Alternativa D',
+  'Alternativa E', 'Alternativa F', 'Correta (letra)', 'Tempo (segundos)', 'Explicação'];
+
+async function ensureXLSX() {
+  if (!window.XLSX) await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+  return window.XLSX;
+}
+
+async function downloadQuestionsSheet(quiz) {
+  const X = await ensureXLSX();
+  const rows = questions.length ? questions.map(q => [
+    q.category, q.text, ...LETTERS.map((_, i) => q.options[i] ?? ''), LETTERS[q.correct_index], q.time_limit, q.explanation || ''
+  ]) : [
+    ['Segurança do Trabalho', 'Exemplo: qual é a função do EPI?', 'Enfeitar o uniforme', 'Proteger o trabalhador', '', '', '', '', 'B', 30, 'O EPI protege contra os riscos da atividade.']
+  ];
+  const ws = X.utils.aoa_to_sheet([SHEET_COLS, ...rows]);
+  ws['!cols'] = [22, 60, 30, 30, 30, 30, 20, 20, 14, 16, 60].map(wch => ({ wch }));
+  const help = X.utils.aoa_to_sheet([
+    ['Como preencher a aba "Perguntas"'],
+    ['• Uma pergunta por linha. Não altere a linha de títulos.'],
+    ['• Categoria: tema da pergunta (ex.: Segurança do Trabalho, Prevenção ao Assédio). Vazio = "Geral".'],
+    ['• Alternativas: preencha de 2 a 6, começando pela A.'],
+    ['• Correta (letra): a letra da alternativa certa (A, B, C, D, E ou F).'],
+    ['• Tempo (segundos): de 5 a 300. Vazio = 30 segundos.'],
+    ['• Explicação: opcional; aparece depois da resposta.'],
+    ['Ao importar, você escolhe se as perguntas serão ADICIONADAS, se vão SUBSTITUIR as atuais ou se criam um NOVO questionário.']
+  ]);
+  help['!cols'] = [{ wch: 110 }];
+  const wb = X.utils.book_new();
+  X.utils.book_append_sheet(wb, ws, 'Perguntas');
+  X.utils.book_append_sheet(wb, help, 'Instruções');
+  const safe = (quiz?.title || 'questionario').replace(/[^\p{L}\p{N} _-]/gu, '').trim().replace(/\s+/g, '_');
+  X.writeFile(wb, `Perguntas_${safe}.xlsx`);
+}
+
+const normKey = v => String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function parseQuestionRows(rows) {
+  const out = [], errors = [];
+  rows.forEach((raw, i) => {
+    const line = i + 2;
+    const r = {};
+    for (const [k, v] of Object.entries(raw)) r[normKey(k)] = String(v ?? '').trim();
+    const get = (...keys) => keys.map(k => r[k]).find(v => v !== undefined && v !== '') ?? '';
+    const opts = LETTERS.map(L => get('alternativa' + L.toLowerCase(), L.toLowerCase()));
+    const text = get('pergunta', 'enunciado');
+    if (!text && opts.every(o => !o)) return;   // linha vazia
+    const filled = opts.map((o, j) => [o, j]).filter(([o]) => o);
+    const letter = get('corretaletra', 'correta', 'respostacorreta', 'resposta').toUpperCase().replace(/[^A-F]/g, '').slice(0, 1);
+    const timeRaw = get('temposegundos', 'tempo', 'tempos');
+    const time = timeRaw === '' ? 30 : Number(timeRaw);
+    const problems = [];
+    if (!text) problems.push('enunciado em branco');
+    if (filled.length < 2) problems.push('menos de 2 alternativas');
+    if (!letter) problems.push('informe a letra da resposta correta');
+    else if (!opts[LETTERS.indexOf(letter)]) problems.push(`a alternativa ${letter} (correta) está vazia`);
+    if (!Number.isInteger(time) || time < 5 || time > 300) problems.push('tempo deve ser de 5 a 300 segundos');
+    if (problems.length) { errors.push(`Linha ${line}: ${problems.join('; ')}.`); return; }
+    out.push({
+      category: get('categoria', 'tema'), text,
+      options: filled.map(([o]) => o),
+      correct_index: filled.findIndex(([, j]) => j === LETTERS.indexOf(letter)),
+      time_limit: time, explanation: get('explicacao')
+    });
+  });
+  return { out, errors };
+}
+
+async function importQuestionsSheet(file, quiz) {
+  const X = await ensureXLSX();
+  const wb = X.read(await file.arrayBuffer());
+  const ws = wb.Sheets['Perguntas'] || wb.Sheets[wb.SheetNames[0]];
+  const { out, errors } = parseQuestionRows(X.utils.sheet_to_json(ws, { defval: '', raw: false }));
+  const ok = out.length && !errors.length;
+  const root = $('#modal-root');
+  root.innerHTML = `
+    <div class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="imp-title">
+      <div class="modal">
+        <h2 id="imp-title">Importar perguntas</h2>
+        <p><b>${out.length}</b> pergunta${out.length === 1 ? '' : 's'} válida${out.length === 1 ? '' : 's'} em <code>${esc(file.name)}</code>.</p>
+        ${errors.length ? `<div class="banner error-banner">
+          Corrija na planilha e importe de novo:<ul style="margin:6px 0 0;padding-left:18px">${errors.slice(0, 12).map(e => `<li>${esc(e)}</li>`).join('')}</ul>
+          ${errors.length > 12 ? `<p style="margin:6px 0 0">… e mais ${errors.length - 12} linha(s).</p>` : ''}</div>` : ''}
+        ${!out.length && !errors.length ? '<p class="muted">Nenhuma pergunta encontrada. Use a planilha baixada pelo botão "Baixar planilha".</p>' : ''}
+        ${ok ? `
+          <label>O que fazer com elas?</label>
+          ${quiz ? `<label class="check"><input type="radio" name="imp" value="append" checked><span>Adicionar ao final de "${esc(quiz.title)}"</span></label>
+          <label class="check"><input type="radio" name="imp" value="replace"><span>Substituir todas as perguntas de "${esc(quiz.title)}"<small>As perguntas atuais desse questionário são apagadas. Sessões já realizadas não mudam.</small></span></label>` : ''}
+          <label class="check"><input type="radio" name="imp" value="new" ${quiz ? '' : 'checked'}><span>Criar um novo questionário</span></label>
+          <div class="field" id="imp-name-wrap"><input id="imp-name" type="text" maxlength="80" aria-label="Nome do novo questionário" placeholder="Nome do novo questionário" value="${esc(file.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '))}"></div>` : ''}
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn btn-ghost" type="button" id="imp-cancel">${ok ? 'Cancelar' : 'Fechar'}</button>
+          ${ok ? '<button class="btn btn-primary" type="button" id="imp-go">Importar</button>' : ''}
+        </div>
+      </div>
+    </div>`;
+  const close = () => { root.innerHTML = ''; };
+  $('#imp-cancel').addEventListener('click', close);
+  const syncName = () => { const w = $('#imp-name-wrap'); if (w) w.style.display = $('input[name=imp]:checked')?.value === 'new' ? '' : 'none'; };
+  $$('input[name=imp]', root).forEach(r => r.addEventListener('change', syncName));
+  syncName();
+  $('#imp-go')?.addEventListener('click', e => withBusy(e.currentTarget, async () => {
+    const how = $('input[name=imp]:checked').value;
+    if (how === 'replace' && !confirm(`Substituir as ${questions.length} perguntas atuais de "${quiz.title}"?`)) return;
+    let target = currentQuiz;
+    if (how === 'new') {
+      const title = $('#imp-name').value.trim();
+      if (!title) { toast('Informe o nome do novo questionário.', 'error'); return; }
+      target = await rpc('admin_save_quiz', { ...P(), p_id: null, p_title: title });
+    }
+    const r = await rpc('admin_import_questions', { ...P(), p_quiz: target, p_replace: how === 'replace', p_questions: out });
+    currentQuiz = target;
+    close();
+    toast(`${r.imported} pergunta(s) importada(s).`, 'success');
+    await loadQuestionsTab();
+  }));
 }
 
 function editQuestion(q) {
@@ -594,9 +804,9 @@ async function openReport(id) {
     <div class="card" style="margin-top:16px">
       <h3>Classificação geral</h3>
       ${ps.length ? `<div class="table-wrap"><table>
-        <thead><tr><th class="num">#</th><th>Nome</th><th>Loja/Setor</th><th class="num">Pontos</th><th class="num">Acertos</th><th class="num">Maior seq.</th><th class="num">Tempo médio</th><th>Medalhas</th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Nome</th>${s.require_matricula ? '<th>Matrícula</th>' : ''}<th>Loja/Setor</th><th class="num">Pontos</th><th class="num">Acertos</th><th class="num">Maior seq.</th><th class="num">Tempo médio</th><th>Medalhas</th></tr></thead>
         <tbody>${ps.map(p => `<tr>
-          <td class="num">${medal(p.pos) || p.pos}</td><td><b>${esc(p.name)}</b></td><td>${esc(p.store)}</td>
+          <td class="num">${medal(p.pos) || p.pos}</td><td><b>${esc(p.name)}</b></td>${s.require_matricula ? `<td>${esc(p.matricula || '')}</td>` : ''}<td>${esc(p.store)}</td>
           <td class="num"><b>${fmt(p.score)}</b></td><td class="num">${p.correct}/${qs.length}</td><td class="num">${p.best_streak}</td>
           <td class="num">${p.avg_ms ? (p.avg_ms / 1000).toFixed(1) + ' s' : '–'}</td>
           <td class="badge-icons">${p.badges.map(b => `<span title="${esc(badgeInfo(b).name)}">${badgeInfo(b).icon}</span>`).join('')}</td>
@@ -621,8 +831,7 @@ function loadScript(src) {
 }
 
 async function exportExcel(rep) {
-  if (!window.XLSX) await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
-  const X = window.XLSX;
+  const X = await ensureXLSX();
   const s = rep.session, qs = rep.questions;
   const byId = Object.fromEntries(rep.players.map(p => [p.id, p]));
   const wb = X.utils.book_new();
@@ -632,13 +841,13 @@ async function exportExcel(rep) {
     X.utils.book_append_sheet(wb, ws, name);
   };
   add('Classificação', rep.players.map(p => ({
-    'Posição': p.pos, 'Nome': p.name, 'Loja/Setor': p.store, 'Pontos': p.score,
+    'Posição': p.pos, 'Nome': p.name, 'Matrícula': p.matricula || '', 'Loja/Setor': p.store, 'Pontos': p.score,
     'Acertos': p.correct, 'Respondidas': p.answered, 'Total de perguntas': qs.length,
     '% de acertos': p.answered ? Math.round(100 * p.correct / p.answered) : 0,
     'Maior sequência': p.best_streak, 'Tempo médio (s)': p.avg_ms ? +(p.avg_ms / 1000).toFixed(1) : '',
     'Medalhas': p.badges.map(b => badgeInfo(b).name).join(', '),
     'Entrou em': fmtDate(p.joined_at)
-  })), [9, 30, 20, 10, 9, 12, 10, 12, 10, 12, 50, 16]);
+  })), [9, 30, 14, 20, 10, 9, 12, 10, 12, 10, 12, 50, 16]);
   add('Lojas', rep.stores.map(t => ({
     'Posição': t.pos, 'Loja/Setor': t.store, 'Participantes': t.players,
     'Média de pontos': t.avg_score, 'Total de pontos': t.total_score, '% de acertos': t.correct_pct ?? 0
@@ -654,11 +863,11 @@ async function exportExcel(rep) {
   add('Respostas', (rep.answers || []).map(a => {
     const p = byId[a.player_id] || {}, q = qs[a.q];
     return {
-      'Nome': p.name, 'Loja/Setor': p.store, 'Pergunta nº': a.q + 1, 'Pergunta': q?.text,
+      'Nome': p.name, 'Matrícula': p.matricula || '', 'Loja/Setor': p.store, 'Pergunta nº': a.q + 1, 'Pergunta': q?.text,
       'Resposta marcada': a.chosen === null ? '(sem resposta)' : `${LETTERS[a.chosen]}) ${q?.options[a.chosen]}`,
       'Correta?': a.ok ? 'Sim' : 'Não', 'Tempo (s)': +(a.ms / 1000).toFixed(1), 'Pontos': a.pts
     };
-  }), [28, 20, 11, 55, 50, 9, 9, 8]);
+  }), [28, 14, 20, 11, 55, 50, 9, 9, 8]);
   const safe = s.name.replace(/[^\p{L}\p{N} _-]/gu, '').trim().replace(/\s+/g, '_') || 'sessao';
   X.writeFile(wb, `CIPA_${safe}_${(s.started_at || s.created_at).slice(0, 10)}.xlsx`);
   toast('Planilha gerada.', 'success');

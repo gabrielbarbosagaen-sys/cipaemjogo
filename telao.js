@@ -14,6 +14,9 @@ let lastFinal = 0;
 let playerList = [];
 
 const tv = () => $('#tv');
+const AUTO_SECS = { reveal: 10, ranking: 6 };
+const autoRefreshed = {};
+const fmtWhen = iso => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 // =====================================================================
 function init() {
@@ -40,6 +43,7 @@ async function lookup(pin) {
 
 async function start() {
   showScreen('s-tv');
+  document.body.insertAdjacentHTML('beforeend', '<div id="auto-chip" class="auto-chip" aria-live="polite"></div>');
   keepAwake();
   try {
     await refresh(true);
@@ -126,6 +130,14 @@ function render() {
 function tick() {
   if (!state) return;
   const s = state.session;
+  const chip = $('#auto-chip');
+  if (s.mode === 'live' && s.auto_advance && AUTO_SECS[s.status] && s.phase_started_at) {
+    const due = Date.parse(s.phase_started_at) + AUTO_SECS[s.status] * 1000;
+    const left = Math.max(0, Math.ceil((due - now()) / 1000));
+    if (chip) chip.textContent = s.status === 'reveal' ? `Ranking em ${left} s` : `Próxima pergunta em ${left} s`;
+    const key = s.status + s.current_index;
+    if (now() >= due + 200 && !autoRefreshed[key]) { autoRefreshed[key] = true; refresh().catch(() => {}); }
+  } else if (chip) chip.textContent = '';
   if (s.mode !== 'live' || s.status !== 'question') return;
   const q = state.question;
   const start = Date.parse(s.question_started_at);
@@ -173,7 +185,9 @@ function buildLobby() {
         <div class="tv-players-head"><h2 style="font-size:2.4rem;margin:0">Participantes</h2><span class="tv-count" id="lobby-count">0</span></div>
         <div class="cloud" id="cloud"></div>
         <p class="muted" style="margin-top:2vh;font-size:1.3rem" id="lobby-hint">
-          ${s.mode === 'live' ? 'Aguardando o início do jogo…' : 'A sala abre em instantes. Cada um responde no seu ritmo.'}
+          ${s.mode === 'live' ? 'Aguardando o início do jogo…'
+            : s.opens_at ? `A sala abre em ${fmtWhen(s.opens_at)}${s.closes_at ? ` e aceita respostas até ${fmtWhen(s.closes_at)}` : ''}.`
+            : 'A sala abre em instantes. Cada um responde no seu ritmo.'}
         </p>
       </div>
     </div>`;
@@ -323,6 +337,7 @@ function buildSelf() {
           <h3>Progresso</h3>
           <div class="progress-big"><i id="self-prog" style="width:0"></i></div>
           <p style="margin-top:1vh;font-size:1.2rem"><b id="self-done">0</b> de <b id="self-total">0</b> participantes concluíram</p>
+          ${s.closes_at ? `<p class="muted" style="font-size:1.1rem;margin:0">🕒 Respostas aceitas até <b style="color:var(--yellow)">${fmtWhen(s.closes_at)}</b></p>` : ''}
         </div>
       </div>
     </div>`;

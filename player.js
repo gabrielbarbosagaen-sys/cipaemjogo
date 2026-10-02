@@ -17,9 +17,23 @@ let joinInfo = null;
 let selfPhase = 'idle';           // idle | question | feedback | done
 let selfQ = null;
 let selfBusy = false;
+let selfAutoAt = null;            // avanço automático: quando ir para a próxima pergunta
 let lastFinalLoad = 0;
 
 const auth = () => ({ p_player: me.player_id, p_token: me.token });
+const fmtWhen = iso => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function scheduleText(s) {
+  if (s.mode !== 'self') return '';
+  const open = s.opens_at && Date.parse(s.opens_at) > now();
+  if (open && s.closes_at) return `🕒 Respostas aceitas de ${fmtWhen(s.opens_at)} até ${fmtWhen(s.closes_at)}.`;
+  if (open) return `🕒 A sala abre em ${fmtWhen(s.opens_at)}.`;
+  if (s.closes_at) return `🕒 Respostas aceitas até ${fmtWhen(s.closes_at)}.`;
+  return '';
+}
+
+// Avanço automático: tempo de cada etapa
+const AUTO_SECS = { reveal: 10, ranking: 6 };
+const autoRefreshed = {};
 const game = () => $('#game');
 
 // =====================================================================
@@ -74,16 +88,25 @@ async function lookupPin() {
     $('#join-session-name').textContent = joinInfo.name;
     $('#join-mode').textContent = joinInfo.mode === 'live' ? 'Ao vivo' : 'No seu ritmo';
     const stores = joinInfo.stores || [];
-    $('#store-field').innerHTML = stores.length
+    $('#store-field').innerHTML = (stores.length
       ? `<label for="store">Sua loja / setor</label>
          <select id="store" required><option value="">Selecione…</option>${stores.map(s => `<option>${esc(s)}</option>`).join('')}</select>`
       : `<label for="store">Sua loja / setor</label>
-         <input id="store" type="text" maxlength="40" placeholder="Ex.: Loja Centro, Açougue, CD" required>`;
+         <input id="store" type="text" maxlength="40" placeholder="Ex.: Loja Centro, Açougue, CD" required>`)
+      + (joinInfo.require_matricula
+        ? `<div style="margin-top:14px"><label for="matricula">Sua matrícula</label>
+           <input id="matricula" type="text" maxlength="30" autocomplete="off" placeholder="Número da matrícula" required>
+           <p class="small muted" style="margin:6px 0 0">Cada matrícula participa uma vez nesta sala.</p></div>`
+        : '');
     const last = store.get('cipa_last_identity');
     if (last) {
       $('#name').value = last.name || '';
       if (last.store && (!stores.length || stores.includes(last.store))) $('#store').value = last.store;
+      if (last.matricula && $('#matricula')) $('#matricula').value = last.matricula;
     }
+    const sched = scheduleText(joinInfo);
+    $('#join-sched').textContent = sched;
+    $('#join-sched').classList.toggle('hidden', !sched);
     $('#form-pin').classList.add('hidden');
     $('#form-join').classList.remove('hidden');
     $('#join-msg').textContent = '';
@@ -98,14 +121,17 @@ async function lookupPin() {
 async function join() {
   const name = $('#name').value.trim();
   const storeName = $('#store').value.trim();
+  const matricula = $('#matricula')?.value.trim() || '';
   if (name.length < 2) { $('#join-msg').textContent = 'Informe seu nome.'; return; }
   if (!storeName) { $('#join-msg').textContent = 'Informe sua loja ou setor.'; return; }
+  if (joinInfo.require_matricula && !matricula) { $('#join-msg').textContent = 'Informe sua matrícula.'; return; }
   $('#btn-join').disabled = true;
   try {
-    const r = await rpc('join_session', { p_pin: joinInfo.pin, p_name: name, p_store: storeName });
+    const r = await rpc('join_session', { p_pin: joinInfo.pin, p_name: name, p_store: storeName, p_matricula: matricula || null });
     me = { ...r, name };
     store.set(KEY, me);
-    store.set('cipa_last_identity', { name, store: storeName });
+    store.set('cipa_last_identity', { name, store: storeName, matricula });
+    if (r.resumed) toast('Bem-vindo de volta! Você continua de onde parou.', 'success');
     history.replaceState(null, '', location.pathname);
     await startGame();
   } catch (e) {
@@ -233,6 +259,19 @@ function tick() {
       setTimeout(() => refresh().catch(() => {}), 200 + Math.random() * 900);
     }
   }
+  if (s.mode === 'live' && s.auto_advance && AUTO_SECS[s.status] && s.phase_started_at) {
+    const key = s.status + s.current_index;
+    if (!autoRefreshed[key] && now() >= Date.parse(s.phase_started_at) + AUTO_SECS[s.status] * 1000 + 300 + Math.random() * 700) {
+      autoRefreshed[key] = true;
+      refresh().catch(() => {});
+    }
+  }
+  if (s.mode === 'self' && selfPhase === 'feedback' && selfAutoAt) {
+    const left = Math.ceil((selfAutoAt - Date.now()) / 1000);
+    const b = $('#btn-next');
+    if (left <= 0) { selfAutoAt = null; goSelfNext(); }
+    else if (b) b.textContent = `${b.dataset.label} (${left})`;
+  }
   if (s.mode === 'self' && s.timed !== false && selfPhase === 'question' && selfQ && !selfQ.sent) {
     const end = selfQ.start + selfQ.question.time_limit * 1000;
     const left = end - now();
@@ -279,8 +318,10 @@ function buildLobby() {
       <h2>Você está dentro, ${esc(state.me.name.split(' ')[0])}!</h2>
       <p class="muted">${esc(state.me.store)} · Sala <b style="color:var(--text)">${esc(state.session.name)}</b></p>
       <div class="waiting-ring"></div>
-      <p><b>Aguardando o organizador ${live ? 'iniciar o jogo' : 'abrir a sala'}…</b></p>
+      <p><b>${live ? 'Aguardando o organizador iniciar o jogo…'
+        : state.session.opens_at ? 'Aguardando o horário de abertura…' : 'Aguardando o organizador abrir a sala…'}</b></p>
       <p class="muted small">${live ? 'As perguntas aparecem no telão e aqui no seu celular.' : 'Quando a sala abrir, as perguntas aparecem aqui automaticamente.'}</p>
+      ${scheduleText(state.session) ? `<p class="small" style="color:var(--yellow-2)">${esc(scheduleText(state.session))}</p>` : ''}
       <span class="chip green"><span class="dot pulse"></span><span id="lobby-count"></span></span>
     </div>
     ${scoringTips()}`;
@@ -517,6 +558,7 @@ function buildSelfQuestion() {
       <div class="timerbar grow" id="timer-bar"><i></i></div>
       <span class="timer-num" id="timer-num"></span>
     </div>` : '<p class="small muted" style="margin:0 0 12px">⏳ Sem limite de tempo: leia com calma.</p>'}
+    ${state.session.closes_at ? `<p class="small muted" style="margin:-6px 0 12px">🕒 Respostas aceitas até ${fmtWhen(state.session.closes_at)}</p>` : ''}
     <p class="qtext">${esc(q.text)}</p>
     ${optionsHtml(q, order)}
     <p class="center small muted" style="margin-top:14px">Pontuação: <b style="color:var(--text)">${fmt(selfQ.score)}</b>${selfQ.streak >= 2 ? ` · 🔥 ${selfQ.streak} seguidas` : ''}</p>`;
@@ -541,6 +583,13 @@ async function selfSubmit(choice, btn) {
   }
 }
 
+function goSelfNext() {
+  if (selfPhase !== 'feedback') return;
+  selfAutoAt = null;
+  selfPhase = 'idle';
+  selfNext();
+}
+
 function buildSelfFeedback(r) {
   const q = selfQ.question;
   const order = optionOrder(q.options.length, me.player_id + ':' + q.idx, state.session.shuffle_options);
@@ -558,7 +607,11 @@ function buildSelfFeedback(r) {
     <button class="btn btn-primary btn-lg btn-block" id="btn-next" type="button">${r.done ? 'Ver meu resultado 🏆' : 'Próxima pergunta →'}</button>`;
   if (r.is_correct) celebrate(0.35);
   if (navigator.vibrate) navigator.vibrate(r.is_correct ? [60, 40, 60] : 200);
-  $('#btn-next').addEventListener('click', () => { selfPhase = 'idle'; selfNext(); });
+  const btn = $('#btn-next');
+  btn.dataset.label = btn.textContent;
+  btn.addEventListener('click', goSelfNext);
+  // avanço automático: tempo para ler a explicação antes da próxima pergunta
+  selfAutoAt = state.session.auto_advance ? Date.now() + (r.explanation ? 8000 : 4000) : null;
   $('#btn-next').focus();
 }
 

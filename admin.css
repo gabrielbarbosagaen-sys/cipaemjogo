@@ -68,3 +68,9 @@ td.qcell { max-width: 420px; }
   .qitem { grid-template-columns: auto minmax(0, 1fr); }
   .qitem .acts { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
 }
+
+fieldset.sched { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 14px; margin: 4px 0 16px; }
+fieldset.sched legend { font-weight: 700; padding: 0 6px; font-size: .9rem; }
+input[type=datetime-local] { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: #0f141b; color: var(--text); font: inherit; color-scheme: dark; }
+input:disabled { opacity: .55; }
+.error-banner { color: #ff9a9d; border-color: #7a2d31; background: #3a1b1d; }

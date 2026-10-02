@@ -65,6 +65,12 @@ git remote add origin https://github.com/SEU-USUARIO/cipa-em-jogo.git && git pus
    - Cadastre a **lista de lojas/setores** (uma por linha). Assim o ranking das lojas não se divide por erro de digitação.
 3. Em **📝 Perguntas** revise o gabarito, o tempo de cada pergunta e as explicações. Também dá para criar, editar, reordenar e duplicar questionários.
 
+**Cadastrar muitas perguntas de uma vez (planilha)**
+1. Em **📝 Perguntas**, escolha o questionário e clique em **⬇ Baixar planilha**. Ela já vem com as perguntas atuais (a "base padrão") e uma aba de instruções.
+2. No Excel, edite ou acrescente linhas: Categoria, Pergunta, Alternativas A a F (mínimo 2), **Correta (letra)**, Tempo (segundos) e Explicação.
+3. Clique em **⬆ Importar planilha** e escolha o arquivo. O sistema confere cada linha e aponta erros (ex.: "Linha 5: informe a letra da resposta correta").
+4. Escolha **Adicionar ao final**, **Substituir todas** ou **Criar um novo questionário**.
+
 ---
 
 ## 4. No dia do encontro
@@ -73,6 +79,14 @@ git remote add origin https://github.com/SEU-USUARIO/cipa-em-jogo.git && git pus
 - [ ] Abra o painel do Supabase. **Projetos gratuitos pausam após 7 dias sem uso**, e acessar o painel reativa o projeto.
 - [ ] Crie a sessão e faça um teste rápido com 2 celulares.
 - [ ] Confira a internet/Wi-Fi do local e a conexão do notebook com o projetor.
+
+**Opções ao criar a sessão**
+
+| Opção | O que faz |
+|---|---|
+| **Exigir matrícula** | O participante informa a matrícula ao entrar. A mesma matrícula **não consegue responder duas vezes** na sessão, mesmo trocando de nome ou de celular. Se a pessoa trocar de aparelho, basta entrar com o **mesmo nome e matrícula**: ela continua de onde parou. A matrícula aparece no painel, no relatório e no Excel, mas não fica pública. |
+| **Avançar automaticamente** | Ao vivo: a resposta fica 10 s no telão, o ranking 6 s e a próxima pergunta entra sozinha. No seu ritmo: depois da explicação (8 s), a próxima pergunta entra sozinha. Dá para ligar/desligar durante o jogo no painel da sessão. |
+| **Horário de validade** (no seu ritmo) | Informe **Abre em** e/ou **Encerra em**: a sala abre e fecha sozinha e, fora desse horário, as respostas não são aceitas. O horário pode ser alterado no painel da sessão. |
 
 **Modo 🎤 Ao vivo (estilo Kahoot)**
 1. No painel: **Sessões → Nova sessão → Ao vivo → Criar sessão**.
@@ -87,11 +101,11 @@ git remote add origin https://github.com/SEU-USUARIO/cipa-em-jogo.git && git pus
 
 **Modo 🏃 No seu ritmo**
 1. Crie a sessão no modo **No seu ritmo** e compartilhe o link/PIN (ex.: no grupo de WhatsApp da loja).
-2. Clique em **▶ Abrir sala**. Cada pessoa responde sozinha.
+2. Clique em **▶ Abrir sala** (ou, se configurou o horário de validade, a sala abre sozinha). Cada pessoa responde sozinha.
    - Com **Usar cronômetro em cada pergunta** marcado, vale o tempo de cada pergunta e os pontos dependem da rapidez.
    - Desmarcado, não há limite de tempo: cada acerto vale 1.000 pontos + bônus de sequência, e o tempo só desempata.
 3. O telão mostra o ranking ao vivo e quantos já concluíram.
-4. Clique em **Encerrar sala e mostrar pódio** para fechar e exibir o pódio final.
+4. Clique em **Encerrar sala e mostrar pódio** para fechar e exibir o pódio final (com horário de encerramento, isso acontece sozinho).
 
 ---
 

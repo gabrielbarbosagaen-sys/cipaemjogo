@@ -86,6 +86,7 @@ git remote add origin https://github.com/SEU-USUARIO/cipa-em-jogo.git && git pus
 |---|---|
 | **Exigir matrícula** | O participante informa a matrícula ao entrar. A mesma matrícula **não consegue responder duas vezes** na sessão, mesmo trocando de nome ou de celular. Se a pessoa trocar de aparelho, basta entrar com o **mesmo nome e matrícula**: ela continua de onde parou. A matrícula aparece no painel, no relatório e no Excel, mas não fica pública. |
 | **Avançar automaticamente** | Ao vivo: a resposta fica 10 s no telão, o ranking 6 s e a próxima pergunta entra sozinha. No seu ritmo: depois da explicação (8 s), a próxima pergunta entra sozinha. Dá para ligar/desligar durante o jogo no painel da sessão. |
+| **Mostrar o resultado de cada resposta** | Desmarcado: durante o jogo ninguém vê se acertou, a resposta certa, os pontos ou o ranking (nem no telão). Pontuação, acertos, pódio e medalhas aparecem só no final. |
 | **Horário de validade** (no seu ritmo) | Informe **Abre em** e/ou **Encerra em**: a sala abre e fecha sozinha e, fora desse horário, as respostas não são aceitas. O horário pode ser alterado no painel da sessão. |
 
 **Modo 🎤 Ao vivo (estilo Kahoot)**

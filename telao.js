@@ -1,5 +1,5 @@
 import {
-  configured, sb, rpc, now, subscribe, $, $$, esc, showScreen, toast, fmt, medal, initials, avatarColor,
+  configured, rpc, now, subscribe, $, $$, esc, showScreen, toast, fmt, medal, initials, avatarColor,
   LETTERS, shape, badgeInfo, celebrate, trophy, store, ADMIN_KEY, playerUrl, notConfiguredHtml, keepAwake
 } from './common.js';
 
@@ -77,9 +77,7 @@ async function refresh(throwErrors = false) {
 }
 
 async function loadPlayers() {
-  const { data } = await sb.from('players').select('id,name,store,joined_at')
-    .eq('session_id', sessionId).order('joined_at', { ascending: false }).limit(120);
-  if (data) playerList = data;
+  playerList = await rpc('lobby_players', { p_session: sessionId });
 }
 
 function setScreen(key, build, update) {
@@ -272,6 +270,14 @@ function updateRing(leftMs, limit) {
 function buildReveal() {
   const q = state.question;
   const dist = q.distribution || [];
+  if (q.correct_index === undefined) {
+    // resultado oculto até o final: só a quantidade de respostas, sem gabarito
+    const total = dist.reduce((a, b) => a + b, 0);
+    tv().innerHTML = `${questionFrame(q, false)}
+      <div class="explain tv-explain"><b>🔒 Respostas encerradas</b>A resposta certa e a classificação serão reveladas no final do jogo.</div>
+      <div class="tv-foot"><span class="answered"><b>${total}</b> resposta${total === 1 ? '' : 's'}</span><span class="muted">Prepare-se para a próxima!</span></div>`;
+    return;
+  }
   const total = dist.reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...dist);
   const pct = total ? Math.round(100 * (dist[q.correct_index] || 0) / total) : 0;
@@ -299,7 +305,7 @@ function rankRows(list, { gain = false, animate = true } = {}) {
       mv = p.prev_pos > p.pos ? `<span class="mv move-up">▲${p.prev_pos - p.pos}</span>` : `<span class="mv move-down">▼${p.pos - p.prev_pos}</span>`;
     }
     return `<div class="tv-row ${p.pos === 1 ? 'first' : ''}" style="${animate ? `animation-delay:${i * 120}ms` : 'animation:none'}">
-      <span class="pos">${medal(p.pos) || p.pos}</span>
+      <span class="pos">${(p.score > 0 && medal(p.pos)) || p.pos}</span>
       <span class="nm"><b>${esc(p.name)}${mv}</b><small>${esc(p.store)}</small></span>
       <span class="gain">${gain && p.last_points ? '+' + fmt(p.last_points) : (p.finished ? '✅' : '')}</span>
       <span class="sc">${fmt(p.score)}</span>
@@ -307,8 +313,17 @@ function rankRows(list, { gain = false, animate = true } = {}) {
   }).join('');
 }
 
+function hiddenBoard(text) {
+  return `<div class="card center" style="padding:5vh 2vw"><div style="font-size:4rem">🔒</div>
+    <h2 style="font-size:2.6rem">Classificação secreta</h2><p class="muted" style="font-size:1.4rem">${text}</p></div>`;
+}
+
 function buildRanking() {
   const q = state.question;
+  if (!state.leaderboard) {
+    tv().innerHTML = `<div class="tv-rank">${hiddenBoard('O ranking será revelado no final do jogo.')}</div>`;
+    return;
+  }
   tv().innerHTML = `
     <div class="tv-rank">
       <h2>🏁 Ranking após a pergunta ${q.idx + 1}</h2>
@@ -323,7 +338,7 @@ function buildSelf() {
   tv().innerHTML = `
     <div class="tv-self">
       <div>
-        <h2 style="font-size:2.6rem">🏁 Ranking ao vivo</h2>
+        <h2 style="font-size:2.6rem">${state.leaderboard ? '🏁 Ranking ao vivo' : '🏁 Ranking'}</h2>
         <div id="self-board"></div>
       </div>
       <div class="tv-side">
@@ -347,7 +362,8 @@ function buildSelf() {
 function updateSelf(first = false) {
   const board = $('#self-board');
   if (!board) return;
-  board.innerHTML = state.leaderboard.length
+  board.innerHTML = !state.leaderboard ? hiddenBoard('O pódio e a classificação aparecem quando a sala for encerrada.')
+    : state.leaderboard.length
     ? rankRows(state.leaderboard.slice(0, 8), { animate: first === true })
     : '<p class="muted" style="font-size:1.3rem">Aguardando as primeiras respostas…</p>';
   $('#self-done').textContent = state.finished_players;

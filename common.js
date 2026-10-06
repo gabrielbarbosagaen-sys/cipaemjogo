@@ -38,14 +38,13 @@ function syncClock(serverIso, t0, t1) {
 export const now = () => Date.now() + clockOffset;
 
 // ---------- tempo real ----------
-export function subscribe(sessionId, onChange, { players = true } = {}) {
+// Avisa quando a sessão muda (início, próxima pergunta, revelação...). As listas de participantes
+// e pontuações não são públicas: chegam pela atualização periódica de cada tela.
+export function subscribe(sessionId, onChange) {
   let timer = null;
   const fire = () => { clearTimeout(timer); timer = setTimeout(onChange, 150); };
   const ch = sb.channel('sess-' + sessionId + '-' + Math.random().toString(36).slice(2, 7))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `id=eq.${sessionId}` }, fire);
-  if (players) {
-    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `session_id=eq.${sessionId}` }, fire);
-  }
   ch.subscribe();
   return () => sb.removeChannel(ch);
 }

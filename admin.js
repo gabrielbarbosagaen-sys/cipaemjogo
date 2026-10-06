@@ -117,7 +117,8 @@ async function loadSessions() {
           <label class="check self-only"><input type="checkbox" id="n-timed" checked><span>Usar cronômetro em cada pergunta<small>Desmarcado: sem limite de tempo; cada acerto vale 1.000 pontos + bônus de sequência, e o tempo só desempata. (No modo ao vivo o cronômetro é sempre usado.)</small></span></label>
           <label class="check self-only"><input type="checkbox" id="n-shuffle-q"><span>Embaralhar a ordem das perguntas<small>Disponível apenas no modo "no seu ritmo".</small></span></label>
           <label class="check"><input type="checkbox" id="n-shuffle-o"><span>Embaralhar as alternativas em cada celular<small>Dificulta copiar a resposta do colega.</small></span></label>
-          <label class="check"><input type="checkbox" id="n-expl" checked><span>Mostrar a explicação após cada resposta<small>Reforça o aprendizado.</small></span></label>
+          <label class="check"><input type="checkbox" id="n-feedback" checked><span>Mostrar o resultado de cada resposta<small>Desmarcado: durante o jogo ninguém vê se acertou, a resposta certa, os pontos ou o ranking. Tudo aparece só no final.</small></span></label>
+          <label class="check"><input type="checkbox" id="n-expl" checked><span>Mostrar a explicação após cada resposta<small>Reforça o aprendizado. (Não aparece se o resultado estiver oculto.)</small></span></label>
           <fieldset class="self-only sched">
             <legend>Horário de validade <span class="muted small">(opcional, só no modo "no seu ritmo")</span></legend>
             <div class="row">
@@ -167,6 +168,7 @@ async function loadSessions() {
           shuffle_questions: $('#n-shuffle-q').checked,
           shuffle_options: $('#n-shuffle-o').checked,
           show_explanation: $('#n-expl').checked,
+          show_feedback: $('#n-feedback').checked,
           timed: $('#n-timed').checked,
           auto_advance: $('#n-auto').checked,
           require_matricula: $('#n-matricula').checked,
@@ -325,7 +327,7 @@ function renderControl() {
         <div>
           <h2 style="margin-bottom:4px">${esc(s.name)}</h2>
           <p class="muted" style="margin:0 0 10px">${esc(s.quiz_title || '')} · ${total} perguntas · ${modeLabel(s.mode)}
-            ${s.timed === false ? ' · sem cronômetro' : ''}${s.shuffle_options ? ' · alternativas embaralhadas' : ''}${s.shuffle_questions ? ' · perguntas embaralhadas' : ''}</p>
+            ${s.show_feedback === false ? ' · resultado oculto até o final' : ''}${s.timed === false ? ' · sem cronômetro' : ''}${s.shuffle_options ? ' · alternativas embaralhadas' : ''}${s.shuffle_questions ? ' · perguntas embaralhadas' : ''}</p>
           ${statusChip(s.status)}
         </div>
         <div class="center">
@@ -366,7 +368,7 @@ function renderControl() {
         ${rep.players.length ? `<div class="table-wrap" style="margin-top:12px"><table>
           <thead><tr><th class="num">#</th><th>Nome</th>${s.require_matricula ? '<th>Matrícula</th>' : ''}<th>Loja/Setor</th><th class="num">Pontos</th><th class="num">Acertos</th><th></th><th></th></tr></thead>
           <tbody>${rep.players.map(p => `<tr>
-            <td class="num">${medal(p.pos) || p.pos}</td>
+            <td class="num">${(p.score > 0 && medal(p.pos)) || p.pos}</td>
             <td>${esc(p.name)}</td>
             ${s.require_matricula ? `<td class="muted">${esc(p.matricula || '')}</td>` : ''}
             <td class="muted">${esc(p.store)}</td>
@@ -806,7 +808,7 @@ async function openReport(id) {
       ${ps.length ? `<div class="table-wrap"><table>
         <thead><tr><th class="num">#</th><th>Nome</th>${s.require_matricula ? '<th>Matrícula</th>' : ''}<th>Loja/Setor</th><th class="num">Pontos</th><th class="num">Acertos</th><th class="num">Maior seq.</th><th class="num">Tempo médio</th><th>Medalhas</th></tr></thead>
         <tbody>${ps.map(p => `<tr>
-          <td class="num">${medal(p.pos) || p.pos}</td><td><b>${esc(p.name)}</b></td>${s.require_matricula ? `<td>${esc(p.matricula || '')}</td>` : ''}<td>${esc(p.store)}</td>
+          <td class="num">${(p.score > 0 && medal(p.pos)) || p.pos}</td><td><b>${esc(p.name)}</b></td>${s.require_matricula ? `<td>${esc(p.matricula || '')}</td>` : ''}<td>${esc(p.store)}</td>
           <td class="num"><b>${fmt(p.score)}</b></td><td class="num">${p.correct}/${qs.length}</td><td class="num">${p.best_streak}</td>
           <td class="num">${p.avg_ms ? (p.avg_ms / 1000).toFixed(1) + ' s' : '–'}</td>
           <td class="badge-icons">${p.badges.map(b => `<span title="${esc(badgeInfo(b).name)}">${badgeInfo(b).icon}</span>`).join('')}</td>

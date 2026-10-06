@@ -173,7 +173,7 @@ async function startGame() {
   game().innerHTML = '<div class="waiting-ring"></div>';
   await refresh(true);
   // o celular só escuta mudanças da sala; a contagem de participantes vem pela atualização periódica
-  unsub = subscribe(me.session_id, onRemote, { players: false });
+  unsub = subscribe(me.session_id, onRemote);
   pollTimer = setInterval(onRemote, 4000);
   tickTimer = setInterval(tick, 100);
 }
@@ -379,7 +379,9 @@ function buildLiveQuestion() {
     </div>
     <p class="qtext">${esc(q.text)}</p>
     ${optionsHtml(q, order)}
-    <p class="center small muted" style="margin-top:14px">Pontuação atual: <b style="color:var(--text)">${fmt(state.me.score)}</b>${state.me.streak >= 2 ? ` · 🔥 ${state.me.streak} seguidas` : ''}</p>`;
+    ${s.show_feedback === false
+      ? '<p class="center small muted" style="margin-top:14px">🔒 Sua pontuação aparece no final do jogo.</p>'
+      : `<p class="center small muted" style="margin-top:14px">Pontuação atual: <b style="color:var(--text)">${fmt(state.me.score)}</b>${state.me.streak >= 2 ? ` · 🔥 ${state.me.streak} seguidas` : ''}</p>`}`;
   const start = Date.parse(s.question_started_at);
   updateTimer(start + q.time_limit * 1000 - now(), q.time_limit);
   $$('.opt', game()).forEach(btn => btn.addEventListener('click', () => sendLive(q.idx, Number(btn.dataset.i), btn)));
@@ -462,8 +464,27 @@ function explainBox(text) {
   return text ? `<div class="explain"><b>Você sabia?</b>${esc(text)}</div>` : '';
 }
 
+// Resultado oculto até o final: confirma só que a resposta foi registrada
+function hiddenBox(chosenText, timeout, sub) {
+  return `<div class="result neutral pop">
+    <div class="big-icon">${timeout ? '⏱️' : '🔒'}</div>
+    <h2>${timeout ? 'Tempo esgotado' : 'Resposta registrada'}</h2>
+    ${chosenText && !timeout ? `<p class="sub">Você respondeu: <b>${esc(chosenText)}</b></p>` : ''}
+    <p class="sub" style="margin-top:8px">${sub}</p>
+  </div>`;
+}
+
 function buildReveal() {
   const s = state.session, q = state.question, m = state.me;
+  if (s.show_feedback === false) {
+    const last = m.last;
+    game().innerHTML = `
+      ${header(q.idx + 1, state.total_questions, q.category)}
+      ${!last ? hiddenBox(null, false, 'Você entrou durante esta pergunta.')
+        : hiddenBox(last.chosen !== null ? q.options[last.chosen] : null, last.chosen === null, 'O resultado e sua pontuação aparecem no final do jogo.')}
+      <p class="center muted small">Aguarde a próxima pergunta…</p>`;
+    return;
+  }
   const order = optionOrder(q.options.length, me.player_id + ':' + q.idx, s.shuffle_options);
   game().innerHTML = `
     ${header(q.idx + 1, state.total_questions, q.category)}
@@ -483,7 +504,7 @@ function buildReveal() {
 function boardHtml(list, myId, { gain = false } = {}) {
   return `<ol class="board">${list.map((p, i) => `
     <li class="${p.id === myId ? 'me' : ''}" style="animation-delay:${i * 60}ms">
-      <span class="pos">${medal(p.pos) || p.pos}</span>
+      <span class="pos">${(p.score > 0 && medal(p.pos)) || p.pos}</span>
       <span class="who"><b>${esc(p.name)}</b><small>${esc(p.store)}</small></span>
       ${gain && p.last_points ? `<span class="gain">+${fmt(p.last_points)}</span>` : ''}
       <span class="score">${fmt(p.score)}</span>
@@ -492,6 +513,16 @@ function boardHtml(list, myId, { gain = false } = {}) {
 
 function buildRanking() {
   const m = state.me;
+  if (state.session.show_feedback === false) {
+    game().innerHTML = `
+      <div class="card hazard center">
+        <div style="font-size:3rem">🔒</div>
+        <h2>Classificação secreta</h2>
+        <p class="muted">O ranking e a sua pontuação serão revelados no final do jogo.</p>
+      </div>
+      <p class="center muted small">Aguarde a próxima pergunta…</p>`;
+    return;
+  }
   const mine = state.leaderboard.find(p => p.id === m.id);
   let move = '';
   if (mine && mine.prev_pos !== mine.pos) {
@@ -561,7 +592,9 @@ function buildSelfQuestion() {
     ${state.session.closes_at ? `<p class="small muted" style="margin:-6px 0 12px">🕒 Respostas aceitas até ${fmtWhen(state.session.closes_at)}</p>` : ''}
     <p class="qtext">${esc(q.text)}</p>
     ${optionsHtml(q, order)}
-    <p class="center small muted" style="margin-top:14px">Pontuação: <b style="color:var(--text)">${fmt(selfQ.score)}</b>${selfQ.streak >= 2 ? ` · 🔥 ${selfQ.streak} seguidas` : ''}</p>`;
+    ${selfQ.score === null || selfQ.score === undefined
+      ? '<p class="center small muted" style="margin-top:14px">🔒 Sua pontuação aparece no final.</p>'
+      : `<p class="center small muted" style="margin-top:14px">Pontuação: <b style="color:var(--text)">${fmt(selfQ.score)}</b>${selfQ.streak >= 2 ? ` · 🔥 ${selfQ.streak} seguidas` : ''}</p>`}`;
   if (timed) updateTimer(selfQ.start + q.time_limit * 1000 - now(), q.time_limit);
   $$('.opt', game()).forEach(btn => btn.addEventListener('click', () => selfSubmit(Number(btn.dataset.i), btn)));
 }
@@ -596,6 +629,11 @@ function buildSelfFeedback(r) {
   const last = { chosen: r.timeout ? null : r.chosen, is_correct: r.is_correct, points: r.points, bonus: r.bonus, elapsed_ms: r.elapsed_ms };
   game().innerHTML = `
     ${header(selfQ.position + 1, selfQ.total, q.category)}
+    ${r.hidden ? `
+      ${hiddenBox(r.chosen !== null ? q.options[r.chosen] : null, r.timeout, 'Seu resultado aparece quando você terminar todas as perguntas.')}
+      <div class="stats" style="grid-template-columns:1fr">
+        <div class="stat"><b>${r.position}/${r.total}</b><span>Respondidas</span></div>
+      </div>` : `
     ${resultBox({ last, streak: r.streak })}
     ${correctLine(q, r.correct_index, order)}
     ${explainBox(r.explanation)}
@@ -603,7 +641,7 @@ function buildSelfFeedback(r) {
       <div class="stat"><b>${fmt(r.score)}</b><span>Pontos</span></div>
       <div class="stat"><b>${r.streak}</b><span>Sequência</span></div>
       <div class="stat"><b>${r.position}/${r.total}</b><span>Respondidas</span></div>
-    </div>
+    </div>`}
     <button class="btn btn-primary btn-lg btn-block" id="btn-next" type="button">${r.done ? 'Ver meu resultado 🏆' : 'Próxima pergunta →'}</button>`;
   if (r.is_correct) celebrate(0.35);
   if (navigator.vibrate) navigator.vibrate(r.is_correct ? [60, 40, 60] : 200);
@@ -611,7 +649,7 @@ function buildSelfFeedback(r) {
   btn.dataset.label = btn.textContent;
   btn.addEventListener('click', goSelfNext);
   // avanço automático: tempo para ler a explicação antes da próxima pergunta
-  selfAutoAt = state.session.auto_advance ? Date.now() + (r.explanation ? 8000 : 4000) : null;
+  selfAutoAt = state.session.auto_advance ? Date.now() + (r.hidden ? 2500 : r.explanation ? 8000 : 4000) : null;
   $('#btn-next').focus();
 }
 

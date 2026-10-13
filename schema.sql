@@ -85,6 +85,8 @@ alter table public.sessions add column if not exists auto_advance boolean not nu
 alter table public.sessions add column if not exists phase_started_at timestamptz;
 -- uma participação por matrícula
 alter table public.sessions add column if not exists require_matricula boolean not null default false;
+-- mostrar acerto/erro, resposta certa e pontos durante o jogo (desligado = só no final)
+alter table public.sessions add column if not exists show_feedback boolean not null default true;
 
 -- Cópia das perguntas no momento do jogo (o histórico não muda se as perguntas forem editadas depois)
 create table if not exists public.session_questions (
@@ -167,15 +169,16 @@ alter table public.player_private    enable row level security;
 do $$ begin
   execute 'revoke all on public.app_settings, public.quizzes, public.questions, public.session_questions,
            public.player_tokens, public.player_private, public.answers from anon, authenticated';
-  execute 'revoke insert, update, delete, truncate on public.sessions, public.players from anon, authenticated';
-  execute 'grant select on public.sessions, public.players to anon, authenticated';
+  -- participantes e pontuações só saem pelas funções (assim o resultado pode ficar oculto até o final)
+  execute 'revoke all on public.players from anon, authenticated';
+  execute 'revoke insert, update, delete, truncate on public.sessions from anon, authenticated';
+  execute 'grant select on public.sessions to anon, authenticated';
 exception when undefined_object then null;
 end $$;
 
 drop policy if exists "leitura publica" on public.sessions;
 create policy "leitura publica" on public.sessions for select using (true);
 drop policy if exists "leitura publica" on public.players;
-create policy "leitura publica" on public.players for select using (true);
 
 -- Tempo real (atualização instantânea das telas)
 do $$ begin
@@ -184,9 +187,9 @@ do $$ begin
                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'sessions') then
       alter publication supabase_realtime add table public.sessions;
     end if;
-    if not exists (select 1 from pg_publication_tables
-                   where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'players') then
-      alter publication supabase_realtime add table public.players;
+    if exists (select 1 from pg_publication_tables
+               where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'players') then
+      alter publication supabase_realtime drop table public.players;
     end if;
   end if;
 end $$;
@@ -436,7 +439,8 @@ returns jsonb language sql stable as $$
     'shuffle_questions', s.shuffle_questions, 'created_at', s.created_at,
     'started_at', s.started_at, 'finished_at', s.finished_at,
     'opens_at', s.opens_at, 'closes_at', s.closes_at, 'auto_advance', s.auto_advance,
-    'phase_started_at', s.phase_started_at, 'require_matricula', s.require_matricula)
+    'phase_started_at', s.phase_started_at, 'require_matricula', s.require_matricula,
+    'show_feedback', s.show_feedback)
 $$;
 
 create or replace function private.store_ranking(p_session uuid)
@@ -544,12 +548,14 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   s public.sessions; q public.session_questions; me public.players; a public.answers;
   v_total int; v_players int; v_finished int; v_answered int;
-  v_q jsonb; v_me jsonb; v_board jsonb; v_dist jsonb;
+  v_q jsonb; v_me jsonb; v_board jsonb; v_dist jsonb; v_hide boolean;
 begin
   perform private.sched_tick(p_session);
   perform private.tick(p_session);
   select * into s from public.sessions where id = p_session;
   if not found then raise exception 'Sessão não encontrada.' using errcode = 'P0002'; end if;
+  -- resultado oculto: acertos, pontos e ranking só aparecem quando o jogo termina
+  v_hide := not s.show_feedback and s.status not in ('finished', 'closed');
 
   select count(*) into v_total from public.session_questions where session_id = s.id;
   select count(*), count(*) filter (where finished_at is not null)
@@ -566,12 +572,15 @@ begin
                          where a2.session_id = s.id and a2.q_index = q.idx and a2.chosen = g.i) order by g.i)
         into v_dist
         from generate_series(0, array_length(q.options, 1) - 1) as g(i);
-      v_q := v_q || jsonb_build_object('correct_index', q.correct_index, 'distribution', v_dist,
-                                       'explanation', case when s.show_explanation then q.explanation end);
+      v_q := v_q || jsonb_build_object('distribution', v_dist);
+      if not v_hide then
+        v_q := v_q || jsonb_build_object('correct_index', q.correct_index,
+                                         'explanation', case when s.show_explanation then q.explanation end);
+      end if;
     end if;
   end if;
 
-  if s.mode = 'self' or s.status <> 'question' then
+  if not v_hide and (s.mode = 'self' or s.status <> 'question') then
     select coalesce(jsonb_agg(jsonb_build_object(
              'id', r.player_id, 'pos', r.pos, 'name', r.name, 'store', r.store, 'score', r.score,
              'correct', r.correct_count, 'answered', r.answered_count, 'last_points', r.last_points,
@@ -587,12 +596,21 @@ begin
       v_me := jsonb_build_object('kicked', true);
     else
       select * into a from public.answers where player_id = me.id and q_index = s.current_index;
+      if v_hide then
+        v_me := jsonb_build_object('id', me.id, 'name', me.name, 'store', me.store, 'answered', me.answered_count,
+          'answered_current', s.mode = 'live' and a.id is not null and a.chosen is not null);
+        if s.mode = 'live' and s.status in ('reveal', 'ranking') then
+          v_me := v_me || jsonb_build_object('last', case when a.id is null then null
+                                                     else jsonb_build_object('chosen', a.chosen) end);
+        end if;
+      else
       v_me := jsonb_build_object(
         'id', me.id, 'name', me.name, 'store', me.store, 'score', me.score, 'streak', me.streak,
         'correct', me.correct_count, 'answered', me.answered_count,
         'pos', (select r.pos from private.ranking(s.id) r where r.player_id = me.id),
         'answered_current', s.mode = 'live' and a.id is not null and a.chosen is not null);
-      if s.mode = 'live' and s.status in ('reveal', 'ranking') then
+      end if;
+      if not v_hide and s.mode = 'live' and s.status in ('reveal', 'ranking') then
         v_me := v_me || jsonb_build_object('last', case when a.id is null then null else jsonb_build_object(
                   'chosen', a.chosen, 'is_correct', a.is_correct, 'points', a.points,
                   'bonus', a.bonus, 'elapsed_ms', a.elapsed_ms) end);
@@ -675,7 +693,8 @@ begin
 
     return jsonb_build_object(
       'state', 'question', 'position', me.self_pos, 'total', v_total,
-      'score', me.score, 'streak', me.streak,
+      'score', case when s.show_feedback then me.score end,
+      'streak', case when s.show_feedback then me.streak end,
       'question', jsonb_build_object('idx', q.idx, 'category', q.category, 'text', q.text,
                                      'options', to_jsonb(q.options), 'time_limit', q.time_limit),
       'started_at', me.q_started_at, 'server_now', clock_timestamp());
@@ -711,6 +730,13 @@ begin
     finished_at  = case when self_pos + 1 >= v_total then clock_timestamp() else finished_at end
   where id = me.id returning * into me;
 
+  if not s.show_feedback then
+    -- resultado oculto: só confirma que a resposta foi registrada
+    return jsonb_build_object('hidden', true, 'chosen', a.chosen,
+      'timeout', a.chosen is null or (s.timed and v_elapsed > q.time_limit * 1000 + 1500),
+      'position', me.self_pos, 'total', v_total, 'done', me.self_pos >= v_total);
+  end if;
+
   return jsonb_build_object(
     'is_correct', a.is_correct, 'chosen', a.chosen,
     'timeout', a.chosen is null or (s.timed and v_elapsed > q.time_limit * 1000 + 1500),
@@ -721,24 +747,36 @@ begin
     'position', me.self_pos, 'total', v_total, 'done', me.self_pos >= v_total);
 end $$;
 
+-- Nomes de quem entrou na sala (telão)
+create or replace function public.lobby_players(p_session uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'store', store, 'joined_at', joined_at)
+                            order by joined_at desc), '[]'::jsonb)
+    from (select * from public.players where session_id = p_session order by joined_at desc limit 120) t
+$$;
+
 -- Pódio, ranking completo, conquistas e ranking por loja
 create or replace function public.session_results(p_session uuid)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare s public.sessions; v_total int; v_rank jsonb;
+declare s public.sessions; v_total int; v_rank jsonb; v_hide boolean;
 begin
   perform private.sched_tick(p_session);
   select * into s from public.sessions where id = p_session;
   if not found then raise exception 'Sessão não encontrada.' using errcode = 'P0002'; end if;
   select count(*) into v_total from public.session_questions where session_id = s.id;
+  -- resultado oculto e jogo em andamento: só aparece quem já concluiu todas as perguntas
+  v_hide := not s.show_feedback and s.status not in ('finished', 'closed');
 
   select coalesce(jsonb_agg(jsonb_build_object(
            'id', r.player_id, 'pos', r.pos, 'name', r.name, 'store', r.store, 'score', r.score,
            'correct', r.correct_count, 'answered', r.answered_count, 'best_streak', r.best_streak,
            'finished', r.finished, 'badges', to_jsonb(private.badges(r.player_id))) order by r.pos), '[]'::jsonb)
-    into v_rank from private.ranking(s.id) r;
+    into v_rank from private.ranking(s.id) r
+   where not v_hide or r.finished;
 
   return jsonb_build_object('session', private.session_json(s), 'total_questions', v_total,
-                            'ranking', v_rank, 'stores', private.store_ranking(s.id));
+                            'ranking', v_rank,
+                            'stores', case when v_hide then '[]'::jsonb else private.store_ranking(s.id) end);
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -934,7 +972,8 @@ begin
   end loop;
 
   insert into public.sessions (pin, name, quiz_id, quiz_title, mode, shuffle_questions, shuffle_options,
-                               show_explanation, timed, auto_advance, require_matricula, opens_at, closes_at)
+                               show_explanation, timed, auto_advance, require_matricula, opens_at, closes_at,
+                               show_feedback)
   values (v_pin, coalesce(nullif(btrim(p_opts->>'name'), ''), 'Encontro CIPA'), v_quiz, v_title, v_mode,
           coalesce((p_opts->>'shuffle_questions')::boolean, false) and v_mode = 'self',
           coalesce((p_opts->>'shuffle_options')::boolean, false),
@@ -942,7 +981,8 @@ begin
           v_mode = 'live' or coalesce((p_opts->>'timed')::boolean, true),
           coalesce((p_opts->>'auto_advance')::boolean, false),
           coalesce((p_opts->>'require_matricula')::boolean, false),
-          v_opens, v_closes)
+          v_opens, v_closes,
+          coalesce((p_opts->>'show_feedback')::boolean, true))
   returning id into v_id;
   perform private.snapshot(v_id);
   return jsonb_build_object('id', v_id, 'pin', v_pin);
